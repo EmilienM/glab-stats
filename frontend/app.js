@@ -349,6 +349,136 @@
   filterRepo.addEventListener("change", render);
   metricSelect.addEventListener("change", render);
 
+  // --- Contributor Search ---
+  const contributorSearch = $("#contributor-search");
+  const searchSuggestions = $("#search-suggestions");
+  let allContributors = [];
+  let currentSuggestionIndex = -1;
+
+  function updateAllContributors() {
+    const mrs = getFilteredMRs();
+    allContributors = buildContributors(mrs);
+  }
+
+  function searchContributors(query) {
+    if (!query || query.length < 2) return [];
+
+    const lowercaseQuery = query.toLowerCase();
+    return allContributors.filter(contributor => {
+      const name = (contributor.name || '').toLowerCase();
+      const username = (contributor.username || '').toLowerCase();
+      return name.includes(lowercaseQuery) || username.includes(lowercaseQuery);
+    }).slice(0, 8); // Limit to 8 suggestions
+  }
+
+  function renderSearchSuggestions(suggestions) {
+    if (suggestions.length === 0) {
+      searchSuggestions.hidden = true;
+      return;
+    }
+
+    searchSuggestions.innerHTML = suggestions.map((contributor, index) => {
+      const avatarImg = contributor.avatar_url
+        ? `<img src="${escapeHtml(contributor.avatar_url)}" class="search-suggestion-avatar" alt="">`
+        : `<div class="search-suggestion-avatar" style="background: var(--bg-tertiary); display: flex; align-items: center; justify-content: center; font-size: 0.7rem; color: var(--text-muted);">${escapeHtml(contributor.name ? contributor.name.charAt(0).toUpperCase() : contributor.username.charAt(0).toUpperCase())}</div>`;
+
+      return `
+        <div class="search-suggestion" data-username="${escapeHtml(contributor.username)}" data-index="${index}">
+          ${avatarImg}
+          <div class="search-suggestion-info">
+            <div class="search-suggestion-name">${escapeHtml(contributor.name || contributor.username)}</div>
+            <div class="search-suggestion-username">@${escapeHtml(contributor.username)}</div>
+          </div>
+        </div>`;
+    }).join('');
+
+    searchSuggestions.hidden = false;
+    currentSuggestionIndex = -1;
+  }
+
+  function selectSuggestion(username) {
+    const contributor = allContributors.find(c => c.username === username);
+    if (contributor) {
+      contributorSearch.value = contributor.name || contributor.username;
+      searchSuggestions.hidden = true;
+      currentSuggestionIndex = -1;
+
+      // Open the contributor detail modal
+      openContributorDetail(username);
+    }
+  }
+
+  function highlightSuggestion(index) {
+    const suggestions = searchSuggestions.querySelectorAll('.search-suggestion');
+    suggestions.forEach((suggestion, i) => {
+      suggestion.classList.toggle('highlighted', i === index);
+    });
+  }
+
+  contributorSearch.addEventListener("input", (e) => {
+    const query = e.target.value.trim();
+    if (query.length < 2) {
+      searchSuggestions.hidden = true;
+      return;
+    }
+
+    const suggestions = searchContributors(query);
+    renderSearchSuggestions(suggestions);
+  });
+
+  contributorSearch.addEventListener("keydown", (e) => {
+    const suggestions = searchSuggestions.querySelectorAll('.search-suggestion');
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      currentSuggestionIndex = Math.min(currentSuggestionIndex + 1, suggestions.length - 1);
+      highlightSuggestion(currentSuggestionIndex);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      currentSuggestionIndex = Math.max(currentSuggestionIndex - 1, -1);
+      highlightSuggestion(currentSuggestionIndex);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (currentSuggestionIndex >= 0) {
+        const selectedSuggestion = suggestions[currentSuggestionIndex];
+        if (selectedSuggestion) {
+          const username = selectedSuggestion.dataset.username;
+          selectSuggestion(username);
+        }
+      }
+    } else if (e.key === 'Escape') {
+      searchSuggestions.hidden = true;
+      currentSuggestionIndex = -1;
+      contributorSearch.blur();
+    }
+  });
+
+  contributorSearch.addEventListener("blur", () => {
+    // Delay hiding to allow click on suggestions
+    setTimeout(() => {
+      searchSuggestions.hidden = true;
+      currentSuggestionIndex = -1;
+    }, 200);
+  });
+
+  searchSuggestions.addEventListener("click", (e) => {
+    const suggestion = e.target.closest('.search-suggestion');
+    if (suggestion) {
+      const username = suggestion.dataset.username;
+      selectSuggestion(username);
+    }
+  });
+
+  // Update contributors list when data changes
+  function updateSearchData() {
+    updateAllContributors();
+    // Clear search when data changes
+    if (contributorSearch.value) {
+      contributorSearch.value = '';
+      searchSuggestions.hidden = true;
+    }
+  }
+
   // Granularity toggle
   granularityToggle.addEventListener("click", (e) => {
     const btn = e.target.closest(".gran-btn");
@@ -474,6 +604,9 @@
     renderScoreLegend(metric);
     if (!skipTimeline) renderTimeline(allFiltered);
     renderLeaderboard(active);
+
+    // Update search data with all contributors from filtered MRs
+    updateSearchData();
   }
 
   function scoreLegendEntries() {

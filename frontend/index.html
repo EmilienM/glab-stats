@@ -41,6 +41,13 @@
           <label for="metric-select">Rank by</label>
           <select id="metric-select"></select>
         </div>
+        <div class="filter-group">
+          <label for="contributor-search">Find Contributor</label>
+          <div class="search-container">
+            <input type="text" id="contributor-search" placeholder="Search by name or username...">
+            <div id="search-suggestions" class="search-suggestions" hidden></div>
+          </div>
+        </div>
         <div class="filter-meta">
           <span id="generated-at" class="generated-at"></span>
         </div>
@@ -141,6 +148,18 @@
       </div>
     </div>
   </div>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="footer-content">
+      <p class="footer-text">
+        Open source project available at
+        <a href="https://github.com/EmilienM/glab-stats" target="_blank" rel="noopener noreferrer" class="footer-link">
+          GitHub
+        </a>
+      </p>
+    </div>
+  </footer>
 
   <script src="app.js?v=3"></script>
 </body>
