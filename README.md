@@ -12,6 +12,16 @@ A lightweight dashboard that tracks merge request contributions across GitLab re
 - **PDF export** — Generate reports with charts and contributor tables
 - **Dark/light themes** — Responsive UI with theme switching
 
+## Demo
+
+### Fetching Data
+
+[![asciicast](https://asciinema.org/a/tKBlKcDrEo0XHIWp.svg)](https://asciinema.org/a/tKBlKcDrEo0XHIWp)
+
+### Dashboard Screenshot
+
+![Dashboard Screenshot](./demo-screenshot.png)
+
 ## Quick Start
 
 1. **Install dependencies**
