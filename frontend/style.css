@@ -678,6 +678,12 @@ body {
   gap: 0.75rem;
 }
 
+.detail-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .detail-avatar {
   width: 44px;
   height: 44px;

@@ -52,7 +52,17 @@ It ranks contributors using a configurable scoring system based on MRs authored,
 4. **Fetch data**
    ```bash
    python fetch_data.py -n 50  # Fetch 50 most recent MRs per repo
+
+   # Additional options:
+   python fetch_data.py -n 100 -w 8              # Use 8 workers for faster fetching
+   python fetch_data.py -r custom-repos.yaml     # Use custom repos config file
+   python fetch_data.py -n 30 -w 6 -r repos.yaml # Combine options
    ```
+
+   **Options:**
+   - `-n, --limit`: Number of most recent MRs to fetch per repo (default: 20)
+   - `-w, --workers`: Number of concurrent threads for fetching MR details (default: 4)
+   - `-r, --repos`: Path to repos configuration file (default: repos.yaml)
 
 5. **Run the UI**
    ```bash

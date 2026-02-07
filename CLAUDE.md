@@ -13,7 +13,13 @@ GitLab Contributions Tracker — a web dashboard that ranks contributor activity
 pip install -r requirements.txt
 
 # Fetch data (requires GITLAB_TOKEN env var; JIRA_API_TOKEN is optional)
-python fetch_data.py -n 50    # -n sets max MRs per repo (default: 20)
+python fetch_data.py -n 50    # Fetch 50 MRs per repo
+python fetch_data.py -n 100 -w 8 -r custom-repos.yaml  # With custom options
+
+# Command-line options:
+# -n, --limit: Number of recent MRs to fetch per repo (default: 20)
+# -w, --workers: Concurrent threads for fetching details (default: 4)
+# -r, --repos: Path to repos configuration file (default: repos.yaml)
 
 # Serve the frontend
 cd frontend && python -m http.server 8080

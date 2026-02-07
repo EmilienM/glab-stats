@@ -772,6 +772,7 @@
 
   // --- PDF Export ---
   const exportBtn = $("#export-pdf");
+  const exportIndividualBtn = $("#export-individual-pdf");
 
   exportBtn.addEventListener("click", () => {
     exportBtn.disabled = true;
@@ -881,6 +882,204 @@
     } finally {
       exportBtn.disabled = false;
       exportBtn.textContent = "PDF";
+    }
+  });
+
+  // --- Individual PDF Export ---
+  exportIndividualBtn.addEventListener("click", () => {
+    if (!detailCurrentUsername) return;
+
+    exportIndividualBtn.disabled = true;
+    exportIndividualBtn.textContent = "...";
+
+    try {
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+      const pageW = doc.internal.pageSize.getWidth();
+      const pageH = doc.internal.pageSize.getHeight();
+      let y = 15;
+
+      // Get contributor data
+      const mrs = getFilteredMRs();
+      const contributors = buildContributors(mrs);
+      const contributor = contributors.find((c) => c.username === detailCurrentUsername);
+      if (!contributor) return;
+
+      // Calculate metrics for the contributor
+      for (const metric of METRICS) {
+        contributor[`metric_${metric.id}`] = metric.compute(contributor);
+      }
+
+      // Title
+      doc.setFontSize(18);
+      doc.setFont("helvetica", "bold");
+      doc.text("Individual Contributor Report", 14, y);
+      y += 8;
+
+      // Contributor name and username
+      doc.setFontSize(14);
+      doc.setFont("helvetica", "bold");
+      doc.text(`${contributor.name} (@${contributor.username})`, 14, y);
+      y += 6;
+
+      // Metadata line
+      doc.setFontSize(9);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(100);
+      const repoLabel = filterRepo.value || "All Repositories";
+      const genDate = generatedAt ? new Date(generatedAt).toLocaleString() : "N/A";
+      doc.text(`Repository: ${repoLabel}  |  Data from: ${genDate}`, 14, y);
+      doc.setTextColor(0);
+      y += 6;
+
+      // Separator
+      doc.setDrawColor(200);
+      doc.line(14, y, pageW - 14, y);
+      y += 8;
+
+      // Metrics summary
+      doc.setFontSize(12);
+      doc.setFont("helvetica", "bold");
+      doc.text("Metrics Summary", 14, y);
+      y += 6;
+
+      // Create metrics table
+      const metricsData = METRICS.map(metric => [
+        metric.label,
+        contributor[`metric_${metric.id}`].toLocaleString()
+      ]);
+
+      doc.autoTable({
+        startY: y,
+        head: [["Metric", "Value"]],
+        body: metricsData,
+        margin: { left: 14, right: 14 },
+        styles: { fontSize: 9, cellPadding: 3 },
+        headStyles: { fillColor: [99, 102, 241], textColor: 255, fontStyle: "bold" },
+        columnStyles: {
+          1: { halign: "right", fontStyle: "bold" }
+        },
+        alternateRowStyles: { fillColor: [245, 245, 250] },
+      });
+
+      y = doc.lastAutoTable.finalY + 8;
+
+      // Repository breakdown
+      if (y > pageH - 40) {
+        doc.addPage();
+        y = 15;
+      }
+
+      doc.setFontSize(12);
+      doc.setFont("helvetica", "bold");
+      doc.text("Repository Breakdown", 14, y);
+      y += 6;
+
+      const repoMap = new Map();
+      for (const mr of contributor.authored_mrs) {
+        if (!repoMap.has(mr.repoName)) {
+          repoMap.set(mr.repoName, { count: 0, merged: 0, adds: 0, dels: 0 });
+        }
+        const r = repoMap.get(mr.repoName);
+        r.count++;
+        if (mr.state === "merged") r.merged++;
+        r.adds += mr.additions || 0;
+        r.dels += mr.deletions || 0;
+      }
+
+      const repoData = [...repoMap.entries()]
+        .sort((a, b) => b[1].count - a[1].count)
+        .map(([name, stats]) => [
+          name,
+          stats.count.toString(),
+          stats.merged.toString(),
+          `+${stats.adds.toLocaleString()}`,
+          `-${stats.dels.toLocaleString()}`
+        ]);
+
+      if (repoData.length > 0) {
+        doc.autoTable({
+          startY: y,
+          head: [["Repository", "Total MRs", "Merged", "Additions", "Deletions"]],
+          body: repoData,
+          margin: { left: 14, right: 14 },
+          styles: { fontSize: 8, cellPadding: 2.5 },
+          headStyles: { fillColor: [99, 102, 241], textColor: 255, fontStyle: "bold" },
+          columnStyles: {
+            1: { halign: "center" },
+            2: { halign: "center" },
+            3: { halign: "right", textColor: [34, 139, 34] },
+            4: { halign: "right", textColor: [220, 20, 60] }
+          },
+          alternateRowStyles: { fillColor: [245, 245, 250] },
+        });
+
+        y = doc.lastAutoTable.finalY + 8;
+      }
+
+      // Recent merge requests
+      if (y > pageH - 40) {
+        doc.addPage();
+        y = 15;
+      }
+
+      doc.setFontSize(12);
+      doc.setFont("helvetica", "bold");
+      doc.text("Recent Merge Requests", 14, y);
+      y += 6;
+
+      const recentMRs = [...contributor.authored_mrs]
+        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+        .slice(0, 15);
+
+      if (recentMRs.length > 0) {
+        const mrData = recentMRs.map(mr => {
+          const d = new Date(mr.created_at);
+          const dateStr = `${d.getUTCDate()}/${d.getUTCMonth() + 1}/${d.getUTCFullYear()}`;
+          return [
+            mr.title.length > 45 ? mr.title.substring(0, 42) + "..." : mr.title,
+            mr.state,
+            mr.repoName.length > 20 ? mr.repoName.substring(0, 17) + "..." : mr.repoName,
+            dateStr
+          ];
+        });
+
+        doc.autoTable({
+          startY: y,
+          head: [["Title", "Status", "Repository", "Created"]],
+          body: mrData,
+          margin: { left: 14, right: 14 },
+          styles: { fontSize: 7, cellPadding: 2 },
+          headStyles: { fillColor: [99, 102, 241], textColor: 255, fontStyle: "bold" },
+          columnStyles: {
+            1: { halign: "center" },
+            3: { halign: "center" }
+          },
+          alternateRowStyles: { fillColor: [245, 245, 250] },
+        });
+
+        y = doc.lastAutoTable.finalY + 8;
+      }
+
+      // Footer
+      if (y > pageH - 20) {
+        doc.addPage();
+        y = pageH - 15;
+      } else {
+        y = pageH - 15;
+      }
+      doc.setFontSize(7);
+      doc.setTextColor(150);
+      doc.text(`Generated on ${new Date().toLocaleString()} — GitLab Contributions Tracker`, 14, y);
+
+      const filename = `contributor-${contributor.username}-${new Date().toISOString().slice(0, 10)}.pdf`;
+      doc.save(filename);
+    } catch (error) {
+      console.error("Error generating PDF:", error);
+      alert("Error generating PDF. Please try again.");
+    } finally {
+      exportIndividualBtn.disabled = false;
+      exportIndividualBtn.textContent = "PDF";
     }
   });
 
