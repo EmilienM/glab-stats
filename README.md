@@ -1,5 +1,7 @@
 # GitLab Contributions Tracker
 
+<img src="./banner.png" alt="Dashboard Screenshot" width="600">
+
 A lightweight dashboard that tracks merge request contributions across GitLab repositories. It ranks contributors using a configurable scoring system based on MRs authored, comments, approvals, lines of code, and Jira bug priority.
 
 ## Features
@@ -16,7 +18,7 @@ A lightweight dashboard that tracks merge request contributions across GitLab re
 
 ### Fetching Data
 
-[![asciicast](https://asciinema.org/a/tKBlKcDrEo0XHIWp.svg)](https://asciinema.org/a/tKBlKcDrEo0XHIWp)
+<a href="https://asciinema.org/a/tKBlKcDrEo0XHIWp"><img src="https://asciinema.org/a/tKBlKcDrEo0XHIWp.svg" alt="asciicast" width="500"></a>
 
 ### Dashboard Screenshot
 
