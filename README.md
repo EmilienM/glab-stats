@@ -9,6 +9,7 @@ It ranks contributors using a configurable scoring system based on MRs authored,
 
 - **Multi-repository tracking** — Configure multiple GitLab repositories in YAML
 - **Configurable scoring** — Customizable weights for different contribution types
+- **Achievement badges** — Visual badges for standout contributors (Merge Machine, Review Guru, etc.)
 - **Jira integration** — Extract bug priority from MR titles and include in scoring
 - **Interactive timeline** — Click timeline bars to filter by specific time periods
 - **Progress tracking** — Monitor contributor activity trends over time with visual progress metrics
