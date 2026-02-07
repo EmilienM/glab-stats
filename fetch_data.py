@@ -6,12 +6,14 @@ import json
 import os
 import re
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from urllib.parse import quote
 
 import requests
 import yaml
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
+from tqdm import tqdm
 
 GITLAB_API_BASE = "https://gitlab.com/api/v4"
 JIRA_BASE_URL = "https://issues.redhat.com"
@@ -228,6 +230,24 @@ def fetch_jira_priority(jira_session, jira_key):
     return None
 
 
+def _fetch_mr_details(session, jira_session, project_path, mr):
+    """Fetch diff stats, comments, approvals, and Jira priority for a single MR."""
+    additions, deletions = fetch_mr_diff_stats(session, project_path, mr["iid"])
+    mr["additions"] = additions
+    mr["deletions"] = deletions
+    mr["commenters"] = fetch_mr_comments(session, project_path, mr["iid"])
+    mr["approvers"] = fetch_mr_approvals(session, project_path, mr["iid"])
+
+    jira_key = extract_jira_key(mr["title"])
+    mr["jira_key"] = jira_key
+    if jira_key and jira_session:
+        mr["jira_priority"] = fetch_jira_priority(jira_session, jira_key)
+    else:
+        mr["jira_priority"] = None
+
+    return mr
+
+
 def main():
     parser = argparse.ArgumentParser(description="Fetch GitLab merge request data.")
     parser.add_argument(
@@ -236,6 +256,13 @@ def main():
         type=int,
         default=20,
         help="Number of most recent MRs to fetch per repo (default: 20)",
+    )
+    parser.add_argument(
+        "-w",
+        "--workers",
+        type=int,
+        default=4,
+        help="Number of concurrent threads for fetching MR details (default: 4)",
     )
     args = parser.parse_args()
 
@@ -269,37 +296,33 @@ def main():
         repo_url = repo_cfg["url"]
         skip_scoring = repo_cfg["skip_scoring"]
         project_path = extract_project_path(repo_url)
-        repo_name = project_path.split("/")[-1]
         print(f"Fetching up to {args.limit} MRs for {project_path}...")
 
         mrs = fetch_merge_requests(session, project_path, args.limit)
         print(f"  Found {len(mrs)} merge requests.")
 
-        print("  Fetching details per MR...")
-        for i, mr in enumerate(mrs, 1):
-            additions, deletions = fetch_mr_diff_stats(session, project_path, mr["iid"])
-            mr["additions"] = additions
-            mr["deletions"] = deletions
-            mr["commenters"] = fetch_mr_comments(session, project_path, mr["iid"])
-            mr["approvers"] = fetch_mr_approvals(session, project_path, mr["iid"])
+        future_to_idx = {}
+        with ThreadPoolExecutor(max_workers=args.workers) as executor:
+            for i, mr in enumerate(mrs):
+                future = executor.submit(_fetch_mr_details, session, jira_session, project_path, mr)
+                future_to_idx[future] = i
 
-            jira_key = extract_jira_key(mr["title"])
-            mr["jira_key"] = jira_key
-            if jira_key and jira_session:
-                mr["jira_priority"] = fetch_jira_priority(jira_session, jira_key)
-            else:
-                mr["jira_priority"] = None
-
-            total_comments = sum(c["count"] for c in mr["commenters"])
-            jira_info = f" {jira_key}({mr['jira_priority'] or '?'})" if jira_key else ""
-            print(
-                f"    [{i}/{len(mrs)}] !{mr['iid']}{jira_info} +{additions} -{deletions} "
-                f"{total_comments} comments, {len(mr['approvers'])} approvals"
+            bar_fmt = (
+                "  {desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]"
             )
+            with tqdm(
+                total=len(mrs),
+                desc=f"  {project_path}",
+                unit="MR",
+                bar_format=bar_fmt,
+            ) as pbar:
+                for future in as_completed(future_to_idx):
+                    future.result()
+                    pbar.update(1)
 
         result["repositories"].append(
             {
-                "name": repo_name,
+                "name": project_path.split("/")[-1],
                 "full_path": project_path,
                 "web_url": repo_url,
                 "skip_scoring": skip_scoring,
