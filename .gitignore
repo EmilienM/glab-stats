@@ -1,6 +1,9 @@
 # Generated data
 frontend/data/data.json
 
+# Repos
+repos.yaml
+
 # Python
 __pycache__/
 *.pyc
