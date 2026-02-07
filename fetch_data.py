@@ -23,6 +23,11 @@ DEFAULT_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "repos.yaml")
 JIRA_KEY_RE = re.compile(r"([A-Z][A-Z0-9]+-\d+)")
 
 
+def is_bot_account(username, bot_accounts):
+    """Check if a username is in the bot accounts list."""
+    return username in bot_accounts
+
+
 def _is_server_error(exc):
     return (
         isinstance(exc, requests.HTTPError)
@@ -61,7 +66,8 @@ def load_config(config_path=None):
                     "skip_scoring": entry.get("skip_scoring", []),
                 }
             )
-    return repos
+    bot_accounts = set(config.get("bot_accounts", []))
+    return repos, bot_accounts
 
 
 def extract_project_path(url):
@@ -76,7 +82,7 @@ def extract_project_path(url):
     raise ValueError(f"Unsupported GitLab URL: {url}")
 
 
-def fetch_merge_requests(session, project_path, limit):
+def fetch_merge_requests(session, project_path, limit, bot_accounts):
     """Fetch merge requests for a project, up to `limit`, handling pagination."""
     encoded_path = quote(project_path, safe="")
     url = f"{GITLAB_API_BASE}/projects/{encoded_path}/merge_requests"
@@ -100,6 +106,12 @@ def fetch_merge_requests(session, project_path, limit):
             if len(all_mrs) >= limit:
                 break
             author = mr.get("author") or {}
+            author_username = author.get("username", "unknown")
+
+            # Skip merge requests from bot accounts
+            if is_bot_account(author_username, bot_accounts):
+                continue
+
             all_mrs.append(
                 {
                     "iid": mr["iid"],
@@ -110,7 +122,7 @@ def fetch_merge_requests(session, project_path, limit):
                     "updated_at": mr["updated_at"],
                     "web_url": mr["web_url"],
                     "author": {
-                        "username": author.get("username", "unknown"),
+                        "username": author_username,
                         "name": author.get("name", "Unknown"),
                         "avatar_url": author.get("avatar_url", ""),
                     },
@@ -155,7 +167,7 @@ def fetch_mr_diff_stats(session, project_path, mr_iid):
     return total_additions, total_deletions
 
 
-def fetch_mr_comments(session, project_path, mr_iid):
+def fetch_mr_comments(session, project_path, mr_iid, bot_accounts):
     """Fetch user comments for a merge request, return per-author counts."""
     encoded_path = quote(project_path, safe="")
     url = f"{GITLAB_API_BASE}/projects/{encoded_path}/merge_requests/{mr_iid}/notes"
@@ -173,6 +185,11 @@ def fetch_mr_comments(session, project_path, mr_iid):
                 continue
             author = note.get("author") or {}
             username = author.get("username", "unknown")
+
+            # Skip comments from bot accounts
+            if is_bot_account(username, bot_accounts):
+                continue
+
             if username not in author_counts:
                 author_counts[username] = {
                     "username": username,
@@ -190,7 +207,7 @@ def fetch_mr_comments(session, project_path, mr_iid):
     return list(author_counts.values())
 
 
-def fetch_mr_approvals(session, project_path, mr_iid):
+def fetch_mr_approvals(session, project_path, mr_iid, bot_accounts):
     """Fetch approvals for a merge request, return list of approvers."""
     encoded_path = quote(project_path, safe="")
     url = f"{GITLAB_API_BASE}/projects/{encoded_path}/merge_requests/{mr_iid}/approvals"
@@ -200,9 +217,15 @@ def fetch_mr_approvals(session, project_path, mr_iid):
     approvers = []
     for entry in data.get("approved_by", []):
         user = entry.get("user") or {}
+        username = user.get("username", "unknown")
+
+        # Skip approvals from bot accounts
+        if is_bot_account(username, bot_accounts):
+            continue
+
         approvers.append(
             {
-                "username": user.get("username", "unknown"),
+                "username": username,
                 "name": user.get("name", "Unknown"),
                 "avatar_url": user.get("avatar_url", ""),
             }
@@ -232,13 +255,13 @@ def fetch_jira_priority(jira_session, jira_key):
     return None
 
 
-def _fetch_mr_details(session, jira_session, project_path, mr):
+def _fetch_mr_details(session, jira_session, project_path, mr, bot_accounts):
     """Fetch diff stats, comments, approvals, and Jira priority for a single MR."""
     additions, deletions = fetch_mr_diff_stats(session, project_path, mr["iid"])
     mr["additions"] = additions
     mr["deletions"] = deletions
-    mr["commenters"] = fetch_mr_comments(session, project_path, mr["iid"])
-    mr["approvers"] = fetch_mr_approvals(session, project_path, mr["iid"])
+    mr["commenters"] = fetch_mr_comments(session, project_path, mr["iid"], bot_accounts)
+    mr["approvers"] = fetch_mr_approvals(session, project_path, mr["iid"], bot_accounts)
 
     jira_key = extract_jira_key(mr["title"])
     mr["jira_key"] = jira_key
@@ -280,11 +303,15 @@ def main():
         print("Error: GITLAB_TOKEN environment variable is not set.", file=sys.stderr)
         sys.exit(1)
 
-    repos = load_config(args.repos)
+    repos, bot_accounts = load_config(args.repos)
     if not repos:
         config_file = args.repos or DEFAULT_CONFIG_PATH
         print(f"Error: No repositories found in {config_file}.", file=sys.stderr)
         sys.exit(1)
+
+    if bot_accounts:
+        bot_list = ", ".join(sorted(bot_accounts))
+        print(f"Configured to ignore {len(bot_accounts)} bot accounts: {bot_list}")
 
     session = requests.Session()
     session.headers["PRIVATE-TOKEN"] = token
@@ -308,13 +335,15 @@ def main():
         project_path = extract_project_path(repo_url)
         print(f"Fetching up to {args.limit} MRs for {project_path}...")
 
-        mrs = fetch_merge_requests(session, project_path, args.limit)
+        mrs = fetch_merge_requests(session, project_path, args.limit, bot_accounts)
         print(f"  Found {len(mrs)} merge requests.")
 
         future_to_idx = {}
         with ThreadPoolExecutor(max_workers=args.workers) as executor:
             for i, mr in enumerate(mrs):
-                future = executor.submit(_fetch_mr_details, session, jira_session, project_path, mr)
+                future = executor.submit(
+                    _fetch_mr_details, session, jira_session, project_path, mr, bot_accounts
+                )
                 future_to_idx[future] = i
 
             bar_fmt = (
