@@ -6,6 +6,17 @@
 # - url: https://gitlab.com/org/docs-repo
 #   skip_scoring:
 #     - lines
+
+# Bot accounts to ignore in the UI
+# List usernames that should be excluded from contributor rankings
+# Examples: CI bots, automated systems, service accounts
+bot_accounts:
+  - gitlab-bot
+  - dependabot
+  - renovate
+  - security-bot
+  # Add more bot accounts as needed
+
 repositories:
   - url: https://gitlab.com/gitlab-org/gitlab
   - url: https://gitlab.com/gitlab-org/gitlab-runner
