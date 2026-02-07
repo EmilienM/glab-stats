@@ -1,10 +1,10 @@
 {
-  "mr_open": 1,
+  "mr_open": 2,
   "mr_merged": 10,
   "comment": 3,
   "approval": 2,
   "line_added": 0.05,
-  "line_deleted": 0.02,
+  "line_deleted": 0.04,
   "priority_critical": 15,
   "priority_major": 8,
   "priority_normal": 3,

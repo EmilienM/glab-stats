@@ -210,6 +210,98 @@
     },
   ];
 
+  // --- Achievement Badges ---
+  function topPercentileThreshold(contributors, valueFn, pct) {
+    const values = contributors.map(valueFn).filter((v) => v > 0).sort((a, b) => b - a);
+    if (values.length === 0) return Infinity;
+    const idx = Math.max(0, Math.ceil(values.length * pct) - 1);
+    return values[idx];
+  }
+
+  const BADGES = [
+    {
+      id: "merge_machine", label: "Merge Machine", icon: "\u26A1", css: "badge-gold",
+      title: "Top 10% by merged MR count (min 5)",
+      qualify(c, all) {
+        const val = c.authored_mrs.filter((mr) => mr.state === "merged").length;
+        return val >= 5 && val >= topPercentileThreshold(all, (x) => x.authored_mrs.filter((mr) => mr.state === "merged").length, 0.1);
+      },
+    },
+    {
+      id: "review_guru", label: "Review Guru", icon: "\uD83D\uDC41", css: "badge-purple",
+      title: "Top 10% by approvals given (min 5)",
+      qualify(c, all) {
+        return c.approvals >= 5 && c.approvals >= topPercentileThreshold(all, (x) => x.approvals, 0.1);
+      },
+    },
+    {
+      id: "commentator", label: "Commentator", icon: "\uD83D\uDCAC", css: "badge-purple",
+      title: "Top 10% by comments on others' MRs (min 10)",
+      qualify(c, all) {
+        const val = c.comments - (c.commentsOnOwn || 0);
+        return val >= 10 && val >= topPercentileThreshold(all, (x) => x.comments - (x.commentsOnOwn || 0), 0.1);
+      },
+    },
+    {
+      id: "code_colossus", label: "Code Colossus", icon: "\u26F0\uFE0F", css: "badge-gold",
+      title: "Top 10% by lines added (min 500)",
+      qualify(c, all) {
+        const val = c.authored_mrs.reduce((s, mr) => s + (mr.additions || 0), 0);
+        return val >= 500 && val >= topPercentileThreshold(all, (x) => x.authored_mrs.reduce((s, mr) => s + (mr.additions || 0), 0), 0.1);
+      },
+    },
+    {
+      id: "the_eraser", label: "The Eraser", icon: "\uD83E\uDDF9", css: "badge-red",
+      title: "More lines deleted than added (min 100 deletions)",
+      qualify(c) {
+        const adds = c.authored_mrs.reduce((s, mr) => s + (mr.additions || 0), 0);
+        const dels = c.authored_mrs.reduce((s, mr) => s + (mr.deletions || 0), 0);
+        return dels >= 100 && dels > adds;
+      },
+    },
+    {
+      id: "bug_slayer", label: "Bug Slayer", icon: "\uD83D\uDC1B", css: "badge-red",
+      title: "Top 10% by Jira priority points (min 1 bug fix)",
+      qualify(c, all) {
+        const val = computePriorityPoints(c.authored_mrs);
+        const hasBug = c.authored_mrs.some((mr) => mr.jira_key);
+        return hasBug && val >= topPercentileThreshold(all, (x) => computePriorityPoints(x.authored_mrs), 0.1);
+      },
+    },
+    {
+      id: "perfectionist", label: "Perfectionist", icon: "\u2728", css: "badge-teal",
+      title: "100% merge rate (min 5 authored MRs)",
+      qualify(c) {
+        const total = c.authored_mrs.length;
+        const merged = c.authored_mrs.filter((mr) => mr.state === "merged").length;
+        return total >= 5 && merged === total;
+      },
+    },
+    {
+      id: "team_player", label: "Team Player", icon: "\uD83E\uDD1D", css: "badge-teal",
+      title: "Comments on others' MRs > 2x comments on own (min 5 on others)",
+      qualify(c) {
+        const onOthers = c.comments - (c.commentsOnOwn || 0);
+        const onOwn = c.commentsOnOwn || 0;
+        return onOthers >= 5 && onOthers > 2 * onOwn;
+      },
+    },
+    {
+      id: "globe_trotter", label: "Globe Trotter", icon: "\uD83C\uDF10", css: "badge-blue",
+      title: "Contributes to 3+ distinct repositories",
+      qualify(c) {
+        const repos = new Set(c.authored_mrs.map((mr) => mr.repoPath || mr.repoName));
+        return repos.size >= 3;
+      },
+    },
+  ];
+
+  function computeBadges(contributors) {
+    for (const c of contributors) {
+      c.badges = BADGES.filter((b) => b.qualify(c, contributors));
+    }
+  }
+
   // --- State ---
   let allMRs = [];
   let repositories = [];
@@ -240,6 +332,7 @@
   const detailMetrics = $("#detail-metrics");
   const detailRepos = $("#detail-repos");
   const detailMRs = $("#detail-mrs");
+  const detailBadges = $("#detail-badges");
   const detailChartsEl = $("#detail-charts");
   const detailGranToggle = $("#detail-gran-toggle");
   let detailCharts = [];
@@ -348,6 +441,136 @@
 
   filterRepo.addEventListener("change", render);
   metricSelect.addEventListener("change", render);
+
+  // --- Contributor Search ---
+  const contributorSearch = $("#contributor-search");
+  const searchSuggestions = $("#search-suggestions");
+  let allContributors = [];
+  let currentSuggestionIndex = -1;
+
+  function updateAllContributors() {
+    const mrs = getFilteredMRs();
+    allContributors = buildContributors(mrs);
+  }
+
+  function searchContributors(query) {
+    if (!query || query.length < 2) return [];
+
+    const lowercaseQuery = query.toLowerCase();
+    return allContributors.filter(contributor => {
+      const name = (contributor.name || '').toLowerCase();
+      const username = (contributor.username || '').toLowerCase();
+      return name.includes(lowercaseQuery) || username.includes(lowercaseQuery);
+    }).slice(0, 8); // Limit to 8 suggestions
+  }
+
+  function renderSearchSuggestions(suggestions) {
+    if (suggestions.length === 0) {
+      searchSuggestions.hidden = true;
+      return;
+    }
+
+    searchSuggestions.innerHTML = suggestions.map((contributor, index) => {
+      const avatarImg = contributor.avatar_url
+        ? `<img src="${escapeHtml(contributor.avatar_url)}" class="search-suggestion-avatar" alt="">`
+        : `<div class="search-suggestion-avatar" style="background: var(--bg-tertiary); display: flex; align-items: center; justify-content: center; font-size: 0.7rem; color: var(--text-muted);">${escapeHtml(contributor.name ? contributor.name.charAt(0).toUpperCase() : contributor.username.charAt(0).toUpperCase())}</div>`;
+
+      return `
+        <div class="search-suggestion" data-username="${escapeHtml(contributor.username)}" data-index="${index}">
+          ${avatarImg}
+          <div class="search-suggestion-info">
+            <div class="search-suggestion-name">${escapeHtml(contributor.name || contributor.username)}</div>
+            <div class="search-suggestion-username">@${escapeHtml(contributor.username)}</div>
+          </div>
+        </div>`;
+    }).join('');
+
+    searchSuggestions.hidden = false;
+    currentSuggestionIndex = -1;
+  }
+
+  function selectSuggestion(username) {
+    const contributor = allContributors.find(c => c.username === username);
+    if (contributor) {
+      contributorSearch.value = contributor.name || contributor.username;
+      searchSuggestions.hidden = true;
+      currentSuggestionIndex = -1;
+
+      // Open the contributor detail modal
+      openContributorDetail(username);
+    }
+  }
+
+  function highlightSuggestion(index) {
+    const suggestions = searchSuggestions.querySelectorAll('.search-suggestion');
+    suggestions.forEach((suggestion, i) => {
+      suggestion.classList.toggle('highlighted', i === index);
+    });
+  }
+
+  contributorSearch.addEventListener("input", (e) => {
+    const query = e.target.value.trim();
+    if (query.length < 2) {
+      searchSuggestions.hidden = true;
+      return;
+    }
+
+    const suggestions = searchContributors(query);
+    renderSearchSuggestions(suggestions);
+  });
+
+  contributorSearch.addEventListener("keydown", (e) => {
+    const suggestions = searchSuggestions.querySelectorAll('.search-suggestion');
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      currentSuggestionIndex = Math.min(currentSuggestionIndex + 1, suggestions.length - 1);
+      highlightSuggestion(currentSuggestionIndex);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      currentSuggestionIndex = Math.max(currentSuggestionIndex - 1, -1);
+      highlightSuggestion(currentSuggestionIndex);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (currentSuggestionIndex >= 0) {
+        const selectedSuggestion = suggestions[currentSuggestionIndex];
+        if (selectedSuggestion) {
+          const username = selectedSuggestion.dataset.username;
+          selectSuggestion(username);
+        }
+      }
+    } else if (e.key === 'Escape') {
+      searchSuggestions.hidden = true;
+      currentSuggestionIndex = -1;
+      contributorSearch.blur();
+    }
+  });
+
+  contributorSearch.addEventListener("blur", () => {
+    // Delay hiding to allow click on suggestions
+    setTimeout(() => {
+      searchSuggestions.hidden = true;
+      currentSuggestionIndex = -1;
+    }, 200);
+  });
+
+  searchSuggestions.addEventListener("click", (e) => {
+    const suggestion = e.target.closest('.search-suggestion');
+    if (suggestion) {
+      const username = suggestion.dataset.username;
+      selectSuggestion(username);
+    }
+  });
+
+  // Update contributors list when data changes
+  function updateSearchData() {
+    updateAllContributors();
+    // Clear search when data changes
+    if (contributorSearch.value) {
+      contributorSearch.value = '';
+      searchSuggestions.hidden = true;
+    }
+  }
 
   // Granularity toggle
   granularityToggle.addEventListener("click", (e) => {
@@ -465,6 +688,8 @@
     contributors.sort((a, b) => b.score - a.score);
     const active = contributors.filter((c) => c.score > 0);
 
+    computeBadges(active);
+
     leaderboardPeriod.textContent = `Showing contributors for ${periodLabel(currentGranularity, activePeriod)} (${periodMRs.length} MRs)`;
 
     if (generatedAt) {
@@ -474,6 +699,9 @@
     renderScoreLegend(metric);
     if (!skipTimeline) renderTimeline(allFiltered);
     renderLeaderboard(active);
+
+    // Update search data with all contributors from filtered MRs
+    updateSearchData();
   }
 
   function scoreLegendEntries() {
@@ -531,6 +759,7 @@
             <div class="lb-name-block">
               <span class="lb-name">${escapeHtml(c.name)}</span>
               <span class="lb-username">@${escapeHtml(c.username)}</span>
+              ${c.badges && c.badges.length ? `<div class="lb-badges">${c.badges.map((b) => `<span class="lb-badge ${b.css}" title="${escapeHtml(b.title)}">${b.icon} ${escapeHtml(b.label)}</span>`).join("")}</div>` : ""}
             </div>
           </div>
           <div class="lb-bar-cell" title="${pct}% of top contributor">
@@ -911,6 +1140,10 @@
         contributor[`metric_${metric.id}`] = metric.compute(contributor);
       }
 
+      // Compute badges
+      computeBadges(contributors);
+      const badges = contributor.badges || [];
+
       // Title
       doc.setFontSize(18);
       doc.setFont("helvetica", "bold");
@@ -922,6 +1155,16 @@
       doc.setFont("helvetica", "bold");
       doc.text(`${contributor.name} (@${contributor.username})`, 14, y);
       y += 6;
+
+      // Badges
+      if (badges.length > 0) {
+        doc.setFontSize(9);
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(80);
+        doc.text("Badges: " + badges.map((b) => `${b.icon} ${b.label}`).join("  |  "), 14, y);
+        doc.setTextColor(0);
+        y += 5;
+      }
 
       // Metadata line
       doc.setFontSize(9);
@@ -1173,6 +1416,13 @@
     }
     detailName.textContent = contributor.name;
     detailUsername.textContent = `@${contributor.username}`;
+
+    // Compute and render badges for this contributor
+    computeBadges(contributors);
+    const badges = contributor.badges || [];
+    detailBadges.innerHTML = badges.length
+      ? badges.map((b) => `<span class="lb-badge ${b.css}" title="${escapeHtml(b.title)}">${b.icon} ${escapeHtml(b.label)}</span>`).join("")
+      : "";
 
     detailCurrentUsername = username;
     renderDetailMetrics(contributor);
