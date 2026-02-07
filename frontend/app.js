@@ -796,7 +796,8 @@
       doc.setTextColor(100);
       const metricLabel = metricSelect.options[metricSelect.selectedIndex].text;
       const repoLabel = filterRepo.value || "All Repositories";
-      const period = periodLabel(currentGranularity);
+      const activePeriod = selectedPeriodKey || currentPeriodKey(currentGranularity);
+      const period = periodLabel(currentGranularity, activePeriod);
       const genDate = generatedAt ? new Date(generatedAt).toLocaleString() : "N/A";
       doc.text(`Ranked by: ${metricLabel}  |  Repository: ${repoLabel}  |  Period: ${period}  |  Data from: ${genDate}`, 14, y);
       doc.setTextColor(0);
@@ -831,7 +832,7 @@
 
       // Build table data from current leaderboard
       const allFiltered = getFilteredMRs();
-      const periodMRs = filterMRsToCurrentPeriod(allFiltered, currentGranularity);
+      const periodMRs = filterMRsToPeriod(allFiltered, currentGranularity, activePeriod);
       const metric = METRICS.find((m) => m.id === metricSelect.value) || METRICS[0];
       const contributors = buildContributors(periodMRs);
       for (const c of contributors) {
