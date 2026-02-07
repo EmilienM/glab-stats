@@ -11,6 +11,7 @@ It ranks contributors using a configurable scoring system based on MRs authored,
 - **Configurable scoring** — Customizable weights for different contribution types
 - **Jira integration** — Extract bug priority from MR titles and include in scoring
 - **Interactive timeline** — Click timeline bars to filter by specific time periods
+- **Progress tracking** — Monitor contributor activity trends over time with visual progress metrics
 - **Multiple metrics** — Score, MR count, lines of code, comments, approvals, bug priority
 - **PDF export** — Generate reports with charts and contributor tables
 - **Dark/light themes** — Responsive UI with theme switching
