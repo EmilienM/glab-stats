@@ -1,0 +1,64 @@
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "UP",   # pyupgrade
+    "S",    # flake8-bandit (security)
+    "SIM",  # flake8-simplify
+]
+ignore = [
+    "S603",  # subprocess-without-shell-equals-true (not applicable)
+    "S607",  # start-process-with-partial-path (not applicable)
+]
+
+[tool.ruff.lint.isort]
+known-third-party = ["requests", "yaml", "tenacity"]
+
+[tool.mypy]
+python_version = "3.13"
+ignore_missing_imports = true
+disable_error_code = ["import-untyped"]
+warn_unused_configs = true
+
+[tool.pylint.main]
+py-version = "3.13"
+
+[tool.pylint."messages control"]
+disable = [
+    "too-few-public-methods",
+    "too-many-arguments",
+    "too-many-locals",
+    "too-many-branches",
+    "too-many-statements",
+    "missing-function-docstring",
+    "missing-class-docstring",
+    "missing-module-docstring",
+]
+
+[tool.pylint.format]
+max-line-length = 100
+
+[tool.pylint.imports]
+known-third-party = ["requests", "yaml", "tenacity"]
+
+[tool.tox]
+env_list = ["ruff", "mypy", "pylint"]
+
+[tool.tox.env.ruff]
+deps = ["ruff"]
+commands = [["ruff", "check", "."], ["ruff", "format", "--check", "."]]
+
+[tool.tox.env.mypy]
+deps = ["mypy", "-r requirements.txt"]
+commands = [["mypy", "fetch_data.py"]]
+
+[tool.tox.env.pylint]
+deps = ["pylint", "-r requirements.txt"]
+commands = [["pylint", "fetch_data.py"]]
