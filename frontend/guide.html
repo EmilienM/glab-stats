@@ -94,7 +94,7 @@
       A lightweight dashboard that tracks merge request contributions across
       one or more private GitLab repositories. It ranks contributors using a
       configurable scoring system based on MRs authored, comments, approvals,
-      lines of code, and Jira bug priority.
+      lines of code, Jira bug priority, and AI co-authorship.
     </p>
 
     <h2>Quick start</h2>
@@ -161,7 +161,31 @@
       <tr><td>Normal bug fix</td><td><code>priority_normal</code></td><td>3</td></tr>
       <tr><td>Minor bug fix</td><td><code>priority_minor</code></td><td>1</td></tr>
       <tr><td>Undefined priority</td><td><code>priority_undefined</code></td><td>0</td></tr>
+      <tr><td>AI co-authored MR</td><td><code>ai_coauthor</code></td><td>5</td></tr>
     </table>
+
+    <h2>AI co-authorship detection</h2>
+    <p>
+      MR descriptions are scanned for trailers that indicate collaboration with
+      AI tools. When a match is found the MR is flagged as AI co-authored and
+      earns bonus score points.
+    </p>
+    <p><strong>Recognized trailers:</strong></p>
+    <ul>
+      <li><code>Co-Authored-By:</code></li>
+      <li><code>Generated-By:</code> / <code>Assisted-By:</code> / <code>AI-Agent:</code></li>
+      <li><code>Generated with:</code> / <code>Created with:</code> / <code>Built with:</code> / <code>Powered by:</code></li>
+    </ul>
+    <p>
+      The value after the trailer is checked against known AI tool names:
+      Claude, ChatGPT, Copilot, Gemini, Cursor, Codeium, Tabnine, Windsurf,
+      and others. Only trailers that reference an AI tool are counted — human
+      co-authors are ignored.
+    </p>
+    <p>
+      Example MR description line:
+    </p>
+    <pre>Co-Authored-By: Claude &lt;noreply@anthropic.com&gt;</pre>
 
     <h2>Available metrics</h2>
     <p>Use the "Rank by" dropdown to switch between:</p>
@@ -173,6 +197,7 @@
       <li><strong>Comments</strong> — review comments posted</li>
       <li><strong>Approvals</strong> — approvals given</li>
       <li><strong>Bug Priority</strong> — points from Jira ticket priority (Critical / Major / Normal / Minor)</li>
+      <li><strong>AI Co-Authored</strong> — number of MRs co-authored with AI tools</li>
     </ul>
 
     <h2>Achievement badges</h2>
@@ -193,6 +218,7 @@
       <tr><td>✨ Perfectionist</td><td>100% merge rate (all MRs merged)</td><td>5 MRs authored</td></tr>
       <tr><td>🤝 Team Player</td><td>Comments on others' MRs > 2x comments on own</td><td>5 comments on others</td></tr>
       <tr><td>🌍 Globe Trotter</td><td>Contributes to 3+ distinct repositories</td><td>3 repos</td></tr>
+      <tr><td>🤖 AI Jedi</td><td>Top 10% by AI co-authored MRs</td><td>3 AI co-authored MRs</td></tr>
     </table>
 
     <h2>Timeline &amp; period filtering</h2>

@@ -1052,6 +1052,12 @@ body {
   flex-shrink: 0;
 }
 
+.detail-mr-ai {
+  font-size: 0.75rem;
+  flex-shrink: 0;
+  cursor: default;
+}
+
 .detail-mr-date {
   font-size: 0.7rem;
   color: var(--text-muted);

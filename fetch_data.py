@@ -22,6 +22,74 @@ DEFAULT_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "repos.yaml")
 
 JIRA_KEY_RE = re.compile(r"([A-Z][A-Z0-9]+-\d+)")
 
+# AI co-author detection patterns (from ai-co-author-scanner)
+AI_PATTERNS = [
+    r"ai\s+assistant",
+    r"ai\s+code",
+    r"amazon\s+codewhisperer",
+    r"anthropic",
+    r"artificial\s+intelligence",
+    r"assistant",
+    r"bard",
+    r"chatgpt",
+    r"claude",
+    r"codeium",
+    r"codewhisperer",
+    r"copilot",
+    r"cursor",
+    r"gemini",
+    r"github\s+copilot",
+    r"gpt-",
+    r"jetbrains\s+ai",
+    r"large\s+language\s+model",
+    r"llm",
+    r"machine\s+learning",
+    r"openai",
+    r"replit",
+    r"sourcegraph\s+cody",
+    r"tabnine",
+    r"v0",
+    r"vercel",
+    r"windsurf",
+]
+AI_REGEX = re.compile("|".join(f"({p})" for p in AI_PATTERNS), re.IGNORECASE)
+
+CO_AUTHOR_PATTERNS = [
+    re.compile(p, re.IGNORECASE)
+    for p in [
+        r"Co-Authored-By:\s*(.+)",
+        r"Generated-By:\s*(.+)",
+        r"Assisted-By:\s*(.+)",
+        r"AI-Agent:\s*(.+)",
+        r"Generated\s+with:\s*(.+)",
+        r"Created\s+with:\s*(.+)",
+        r"Built\s+with:\s*(.+)",
+        r"Powered\s+by:\s*(.+)",
+    ]
+]
+
+
+def detect_ai_coauthor(description):
+    """Detect AI co-authorship from an MR description.
+
+    Scans for co-author trailers (Co-Authored-By, Generated-By, Assisted-By, etc.)
+    and checks if any match known AI tool patterns.
+    """
+    if not description:
+        return False
+    for line in description.split("\n"):
+        line = line.strip()
+        for pattern in CO_AUTHOR_PATTERNS:
+            match = pattern.search(line)
+            if match:
+                value = match.group(1).strip()
+                # Remove Signed-off-by trailer if appended on the same line
+                if "signed-off-by" in value.lower():
+                    value = re.split(r"\s+signed-off-by\s*:", value, flags=re.IGNORECASE)[0].strip()
+                if AI_REGEX.search(value):
+                    return True
+    return False
+
 
 def is_bot_account(username, bot_accounts):
     """Check if a username is in the bot accounts list."""
@@ -112,6 +180,7 @@ def fetch_merge_requests(session, project_path, limit, bot_accounts):
             if is_bot_account(author_username, bot_accounts):
                 continue
 
+            mr_description = mr.get("description") or ""
             all_mrs.append(
                 {
                     "iid": mr["iid"],
@@ -121,6 +190,7 @@ def fetch_merge_requests(session, project_path, limit, bot_accounts):
                     "merged_at": mr.get("merged_at"),
                     "updated_at": mr["updated_at"],
                     "web_url": mr["web_url"],
+                    "ai_coauthored": detect_ai_coauthor(mr_description),
                     "author": {
                         "username": author_username,
                         "name": author.get("name", "Unknown"),

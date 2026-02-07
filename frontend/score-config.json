@@ -9,5 +9,6 @@
   "priority_major": 8,
   "priority_normal": 3,
   "priority_minor": 1,
-  "priority_undefined": 0
+  "priority_undefined": 0,
+  "ai_coauthor": 5
 }

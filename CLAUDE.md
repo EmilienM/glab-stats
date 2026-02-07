@@ -38,7 +38,7 @@ Output is written to `frontend/data/data.json`.
 ### Key frontend abstractions in `app.js`
 
 - **METRICS array**: Each metric is an object with `{id, label, compute(contributor), breakdown(contributor)}`. Adding a new ranking metric means adding an entry here.
-- **Score configuration**: Three layers merged in order — `SCORE_DEFAULTS` (hardcoded) → `SCORE_FILE` (from `score-config.json`) → localStorage overrides. 11 scoring dimensions (mr_open, mr_merged, comment, approval, line_added, line_deleted, priority_*).
+- **Score configuration**: Three layers merged in order — `SCORE_DEFAULTS` (hardcoded) → `SCORE_FILE` (from `score-config.json`) → localStorage overrides. 12 scoring dimensions (mr_open, mr_merged, comment, approval, line_added, line_deleted, priority_*, ai_coauthor).
 - **Timeline bucketing**: `getBucketKey()` / `buildTimelineBuckets()` group MRs by day/week/month/year. Clicking a bar filters the leaderboard to that period.
 - **Contributor model**: Built by `buildContributors()` which unifies MR authors, commenters, and approvers into a single object per user.
 

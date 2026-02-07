@@ -9,11 +9,12 @@ It ranks contributors using a configurable scoring system based on MRs authored,
 
 - **Multi-repository tracking** — Configure multiple GitLab repositories in YAML
 - **Configurable scoring** — Customizable weights for different contribution types
-- **Achievement badges** — Visual badges for standout contributors (Merge Machine, Review Guru, etc.)
+- **Achievement badges** — Visual badges for standout contributors (Merge Machine, Review Guru, AI Jedi, etc.)
+- **AI co-authorship tracking** — Detects AI-assisted MRs via description trailers (Co-Authored-By, Generated-By, etc.) and rewards collaboration with AI tools
 - **Jira integration** — Extract bug priority from MR titles and include in scoring
 - **Interactive timeline** — Click timeline bars to filter by specific time periods
 - **Progress tracking** — Monitor contributor activity trends over time with visual progress metrics
-- **Multiple metrics** — Score, MR count, lines of code, comments, approvals, bug priority
+- **Multiple metrics** — Score, MR count, lines of code, comments, approvals, bug priority, AI co-authored
 - **PDF export** — Generate reports with charts and contributor tables
 - **Dark/light themes** — Responsive UI with theme switching
 
@@ -79,6 +80,19 @@ It ranks contributors using a configurable scoring system based on MRs authored,
 - **Badge criteria** — Edit `frontend/badge-config.json` or use the Settings modal to configure thresholds and percentiles
 - **Repository filtering** — Add `skip_scoring: [lines, comments, approvals]` to exclude categories per repo
 - **Jira integration** — Extracts ticket IDs from MR titles (e.g., `RHEL-1234: fix bug`)
+
+### AI Co-Authorship Detection
+
+MR descriptions are scanned for trailers indicating AI collaboration:
+
+- `Co-Authored-By:` / `Generated-By:` / `Assisted-By:` / `AI-Agent:`
+- `Generated with:` / `Created with:` / `Built with:` / `Powered by:`
+
+These are matched against known AI tools (Claude, ChatGPT, Copilot, Gemini, Cursor, etc.). When detected, the MR is flagged as AI co-authored, contributing to:
+
+- **Score** — `ai_coauthor` weight (default: 5 points per AI co-authored MR)
+- **AI Co-Authored metric** — Rank contributors by number of AI-assisted MRs
+- **AI Jedi badge** — Awarded to top AI collaborators (default: top 10%, minimum 3 MRs)
 
 ## License
 

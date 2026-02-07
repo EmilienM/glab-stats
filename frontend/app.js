@@ -12,6 +12,7 @@
     mr_open: 1, mr_merged: 10, comment: 3, approval: 2,
     line_added: 0.05, line_deleted: 0.02,
     priority_critical: 15, priority_major: 8, priority_normal: 3, priority_minor: 1, priority_undefined: 0,
+    ai_coauthor: 5,
   };
   let SCORE_FILE = { ...SCORE_DEFAULTS };
   let SCORE = { ...SCORE_DEFAULTS };
@@ -20,9 +21,9 @@
 
   async function loadScoreConfig() {
     try {
-      const resp = await fetch("score-config.json");
+      const resp = await fetch("score-config.json", { cache: "no-store" });
       if (resp.ok) {
-        SCORE_FILE = await resp.json();
+        SCORE_FILE = { ...SCORE_DEFAULTS, ...await resp.json() };
       }
     } catch (_) {
       // keep defaults
@@ -51,6 +52,7 @@
     perfectionist: { enabled: true, threshold: 5 },
     team_player: { enabled: true, threshold: 5, ratio: 2 },
     globe_trotter: { enabled: true, threshold: 3 },
+    ai_jedi: { enabled: true, percentile: 0.1, threshold: 3 },
   };
   let BADGE_FILE = { ...BADGE_DEFAULTS };
   let BADGE = { ...BADGE_DEFAULTS };
@@ -59,9 +61,13 @@
 
   async function loadBadgeConfig() {
     try {
-      const resp = await fetch("badge-config.json");
+      const resp = await fetch("badge-config.json", { cache: "no-store" });
       if (resp.ok) {
-        BADGE_FILE = await resp.json();
+        const loaded = await resp.json();
+        BADGE_FILE = { ...BADGE_DEFAULTS };
+        for (const [key, val] of Object.entries(loaded)) {
+          BADGE_FILE[key] = { ...(BADGE_DEFAULTS[key] || {}), ...val };
+        }
       }
     } catch (_) {
       // keep defaults
@@ -104,6 +110,7 @@
     const adds = c.authored_mrs.reduce((s, mr) => s + (mr.additions || 0), 0);
     const dels = c.authored_mrs.reduce((s, mr) => s + (mr.deletions || 0), 0);
     const prioPoints = computePriorityPoints(c.authored_mrs);
+    const aiCount = c.authored_mrs.filter((mr) => mr.ai_coauthored).length;
     return Math.round(
       (nonMerged * SCORE.mr_open)
       + (merged * SCORE.mr_merged)
@@ -112,6 +119,7 @@
       + (adds * SCORE.line_added)
       + (dels * SCORE.line_deleted)
       + prioPoints
+      + (aiCount * SCORE.ai_coauthor)
     );
   }
 
@@ -131,11 +139,13 @@
         const approvalPts = c.approvals * SCORE.approval;
         const linePts = Math.round((adds * SCORE.line_added) + (dels * SCORE.line_deleted));
         const prioPts = computePriorityPoints(c.authored_mrs);
+        const aiPts = c.authored_mrs.filter((mr) => mr.ai_coauthored).length * SCORE.ai_coauthor;
         if (mrPts) p.push({ label: `${mrPts} MRs`, css: "mini-badge-merged" });
         if (linePts) p.push({ label: `${linePts} lines`, css: "mini-badge-opened" });
         if (commentPts) p.push({ label: `${commentPts} comments`, css: "mini-badge-opened" });
         if (approvalPts) p.push({ label: `${approvalPts} approvals`, css: "mini-badge-closed" });
         if (prioPts) p.push({ label: `${prioPts} priority`, css: "mini-badge-merged" });
+        if (aiPts) p.push({ label: `${aiPts} AI`, css: "mini-badge-merged" });
         return p;
       },
     },
@@ -247,6 +257,16 @@
         return p;
       },
     },
+    {
+      id: "ai_coauthored",
+      label: "AI Co-Authored",
+      compute: (c) => c.authored_mrs.filter((mr) => mr.ai_coauthored).length,
+      breakdown: (c) => {
+        const total = c.authored_mrs.length;
+        const ai = c.authored_mrs.filter((mr) => mr.ai_coauthored).length;
+        return ai ? [{ label: `${ai} of ${total} MRs`, css: "mini-badge-merged" }] : [];
+      },
+    },
   ];
 
   // --- Achievement Badges ---
@@ -351,6 +371,16 @@
         return repos.size >= config.threshold;
       },
     },
+    {
+      id: "ai_jedi", label: "AI Jedi", icon: "\uD83E\uDD16", css: "badge-purple",
+      title: "Top performers by AI co-authored MRs",
+      qualify(c, all) {
+        const config = BADGE.ai_jedi;
+        if (!config.enabled) return false;
+        const val = c.authored_mrs.filter((mr) => mr.ai_coauthored).length;
+        return val >= config.threshold && val >= topPercentileThreshold(all, (x) => x.authored_mrs.filter((mr) => mr.ai_coauthored).length, config.percentile);
+      },
+    },
   ];
 
   function computeBadges(contributors) {
@@ -437,7 +467,7 @@
   // --- Data Loading ---
   async function loadData() {
     try {
-      const resp = await fetch("data/data.json");
+      const resp = await fetch("data/data.json", { cache: "no-store" });
       if (!resp.ok) throw new Error(`Failed to load data (${resp.status})`);
       const data = await resp.json();
 
@@ -773,6 +803,7 @@
       { value: SCORE.priority_major, label: "per major bug" },
       { value: SCORE.priority_normal, label: "per normal bug" },
       { value: SCORE.priority_minor, label: "per minor bug" },
+      { value: SCORE.ai_coauthor, label: "per AI co-authored MR" },
     ].filter((e) => e.value);
   }
 
@@ -1397,6 +1428,7 @@
     priority_normal: "Normal bug fix",
     priority_minor: "Minor bug fix",
     priority_undefined: "Undefined priority",
+    ai_coauthor: "AI co-authored MR",
   };
 
   const BADGE_LABELS = {
@@ -1409,6 +1441,7 @@
     perfectionist: "✨ Perfectionist",
     team_player: "🤝 Team Player",
     globe_trotter: "🌍 Globe Trotter",
+    ai_jedi: "🤖 AI Jedi",
   };
 
   const settingsBtn = $("#btn-settings");
@@ -1635,7 +1668,7 @@
 
     function ensure(key) {
       if (!bucketData.has(key)) {
-        bucketData.set(key, { authored: 0, merged: 0, comments: 0, approvals: 0, adds: 0, dels: 0, priorityPts: 0 });
+        bucketData.set(key, { authored: 0, merged: 0, comments: 0, approvals: 0, adds: 0, dels: 0, priorityPts: 0, aiCoauthored: 0 });
       }
       return bucketData.get(key);
     }
@@ -1656,6 +1689,7 @@
         if (mr.jira_key) {
           b.priorityPts += SCORE[priorityScoreKey(mr.jira_priority)] || 0;
         }
+        if (mr.ai_coauthored) b.aiCoauthored++;
       }
 
       if (!skip.has("comments")) {
@@ -1675,12 +1709,13 @@
     const result = [];
     let cur = startKey;
     while (cur <= endKey) {
-      const d = bucketData.get(cur) || { authored: 0, merged: 0, comments: 0, approvals: 0, adds: 0, dels: 0, priorityPts: 0 };
+      const d = bucketData.get(cur) || { authored: 0, merged: 0, comments: 0, approvals: 0, adds: 0, dels: 0, priorityPts: 0, aiCoauthored: 0 };
       const nonMerged = d.authored - d.merged;
       d.score = Math.round(
         (nonMerged * SCORE.mr_open) + (d.merged * SCORE.mr_merged) +
         (d.comments * SCORE.comment) + (d.approvals * SCORE.approval) +
-        (d.adds * SCORE.line_added) + (d.dels * SCORE.line_deleted) + d.priorityPts
+        (d.adds * SCORE.line_added) + (d.dels * SCORE.line_deleted) + d.priorityPts +
+        (d.aiCoauthored * SCORE.ai_coauthor)
       );
       result.push({ key: cur, label: formatBucketLabel(cur, gran), ...d });
       cur = advanceBucket(cur, gran);
@@ -1712,6 +1747,11 @@
 
     if (hasPriority) {
       configs.splice(2, 0, { title: "Bug Priority", values: data.map((d) => d.priorityPts), color: "#ef4444" });
+    }
+
+    const hasAI = data.some((d) => d.aiCoauthored > 0);
+    if (hasAI) {
+      configs.push({ title: "AI Co-Authored", values: data.map((d) => d.aiCoauthored), color: "#a855f7" });
     }
 
     const colors = getChartColors();
@@ -1818,9 +1858,11 @@
       const d = new Date(mr.created_at);
       const dateStr = `${SHORT_MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()}`;
       const url = mr.web_url ? escapeHtml(mr.web_url) : "#";
+      const aiTag = mr.ai_coauthored ? '<span class="detail-mr-ai" title="AI co-authored">\uD83E\uDD16</span>' : "";
       return `<div class="detail-mr-item">
         <span class="detail-mr-dot ${dotClass}"></span>
         <span class="detail-mr-title"><a href="${url}" target="_blank" rel="noopener">${escapeHtml(mr.title)}</a></span>
+        ${aiTag}
         <span class="detail-mr-repo">${escapeHtml(mr.repoName)}</span>
         <span class="detail-mr-date">${dateStr}</span>
       </div>`;

@@ -40,5 +40,10 @@
   "globe_trotter": {
     "enabled": true,
     "threshold": 3
+  },
+  "ai_jedi": {
+    "enabled": true,
+    "percentile": 0.1,
+    "threshold": 3
   }
 }
