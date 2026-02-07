@@ -40,6 +40,45 @@
     }
   }
 
+  // Badge configuration — loaded from badge-config.json, overridden by localStorage
+  const BADGE_DEFAULTS = {
+    merge_machine: { enabled: true, percentile: 0.1, threshold: 5 },
+    review_guru: { enabled: true, percentile: 0.1, threshold: 5 },
+    commentator: { enabled: true, percentile: 0.1, threshold: 10 },
+    code_colossus: { enabled: true, percentile: 0.1, threshold: 500 },
+    the_eraser: { enabled: true, threshold: 100 },
+    bug_slayer: { enabled: true, percentile: 0.1, threshold: 1 },
+    perfectionist: { enabled: true, threshold: 5 },
+    team_player: { enabled: true, threshold: 5, ratio: 2 },
+    globe_trotter: { enabled: true, threshold: 3 },
+  };
+  let BADGE_FILE = { ...BADGE_DEFAULTS };
+  let BADGE = { ...BADGE_DEFAULTS };
+
+  const BADGE_STORAGE_KEY = "badge-config-overrides";
+
+  async function loadBadgeConfig() {
+    try {
+      const resp = await fetch("badge-config.json");
+      if (resp.ok) {
+        BADGE_FILE = await resp.json();
+      }
+    } catch (_) {
+      // keep defaults
+    }
+    // Apply localStorage overrides on top of file values
+    const saved = localStorage.getItem(BADGE_STORAGE_KEY);
+    if (saved) {
+      try {
+        BADGE = { ...BADGE_FILE, ...JSON.parse(saved) };
+      } catch (_) {
+        BADGE = { ...BADGE_FILE };
+      }
+    } else {
+      BADGE = { ...BADGE_FILE };
+    }
+  }
+
   function priorityScoreKey(priority) {
     if (!priority) return "priority_undefined";
     const p = priority.toLowerCase();
@@ -221,77 +260,95 @@
   const BADGES = [
     {
       id: "merge_machine", label: "Merge Machine", icon: "\u26A1", css: "badge-gold",
-      title: "Top 10% by merged MR count (min 5)",
+      title: "Top performers by merged MR count",
       qualify(c, all) {
+        const config = BADGE.merge_machine;
+        if (!config.enabled) return false;
         const val = c.authored_mrs.filter((mr) => mr.state === "merged").length;
-        return val >= 5 && val >= topPercentileThreshold(all, (x) => x.authored_mrs.filter((mr) => mr.state === "merged").length, 0.1);
+        return val >= config.threshold && val >= topPercentileThreshold(all, (x) => x.authored_mrs.filter((mr) => mr.state === "merged").length, config.percentile);
       },
     },
     {
       id: "review_guru", label: "Review Guru", icon: "\uD83D\uDC41", css: "badge-purple",
-      title: "Top 10% by approvals given (min 5)",
+      title: "Top performers by approvals given",
       qualify(c, all) {
-        return c.approvals >= 5 && c.approvals >= topPercentileThreshold(all, (x) => x.approvals, 0.1);
+        const config = BADGE.review_guru;
+        if (!config.enabled) return false;
+        return c.approvals >= config.threshold && c.approvals >= topPercentileThreshold(all, (x) => x.approvals, config.percentile);
       },
     },
     {
       id: "commentator", label: "Commentator", icon: "\uD83D\uDCAC", css: "badge-purple",
-      title: "Top 10% by comments on others' MRs (min 10)",
+      title: "Top performers by comments on others' MRs",
       qualify(c, all) {
+        const config = BADGE.commentator;
+        if (!config.enabled) return false;
         const val = c.comments - (c.commentsOnOwn || 0);
-        return val >= 10 && val >= topPercentileThreshold(all, (x) => x.comments - (x.commentsOnOwn || 0), 0.1);
+        return val >= config.threshold && val >= topPercentileThreshold(all, (x) => x.comments - (x.commentsOnOwn || 0), config.percentile);
       },
     },
     {
       id: "code_colossus", label: "Code Colossus", icon: "\u26F0\uFE0F", css: "badge-gold",
-      title: "Top 10% by lines added (min 500)",
+      title: "Top performers by lines added",
       qualify(c, all) {
+        const config = BADGE.code_colossus;
+        if (!config.enabled) return false;
         const val = c.authored_mrs.reduce((s, mr) => s + (mr.additions || 0), 0);
-        return val >= 500 && val >= topPercentileThreshold(all, (x) => x.authored_mrs.reduce((s, mr) => s + (mr.additions || 0), 0), 0.1);
+        return val >= config.threshold && val >= topPercentileThreshold(all, (x) => x.authored_mrs.reduce((s, mr) => s + (mr.additions || 0), 0), config.percentile);
       },
     },
     {
       id: "the_eraser", label: "The Eraser", icon: "\uD83E\uDDF9", css: "badge-red",
-      title: "More lines deleted than added (min 100 deletions)",
+      title: "More lines deleted than added",
       qualify(c) {
+        const config = BADGE.the_eraser;
+        if (!config.enabled) return false;
         const adds = c.authored_mrs.reduce((s, mr) => s + (mr.additions || 0), 0);
         const dels = c.authored_mrs.reduce((s, mr) => s + (mr.deletions || 0), 0);
-        return dels >= 100 && dels > adds;
+        return dels >= config.threshold && dels > adds;
       },
     },
     {
       id: "bug_slayer", label: "Bug Slayer", icon: "\uD83D\uDC1B", css: "badge-red",
-      title: "Top 10% by Jira priority points (min 1 bug fix)",
+      title: "Top performers by bug priority points",
       qualify(c, all) {
+        const config = BADGE.bug_slayer;
+        if (!config.enabled) return false;
         const val = computePriorityPoints(c.authored_mrs);
         const hasBug = c.authored_mrs.some((mr) => mr.jira_key);
-        return hasBug && val >= topPercentileThreshold(all, (x) => computePriorityPoints(x.authored_mrs), 0.1);
+        return val >= config.threshold && hasBug && val >= topPercentileThreshold(all, (x) => computePriorityPoints(x.authored_mrs), config.percentile);
       },
     },
     {
       id: "perfectionist", label: "Perfectionist", icon: "\u2728", css: "badge-teal",
-      title: "100% merge rate (min 5 authored MRs)",
+      title: "100% merge rate",
       qualify(c) {
+        const config = BADGE.perfectionist;
+        if (!config.enabled) return false;
         const total = c.authored_mrs.length;
         const merged = c.authored_mrs.filter((mr) => mr.state === "merged").length;
-        return total >= 5 && merged === total;
+        return total >= config.threshold && merged === total;
       },
     },
     {
       id: "team_player", label: "Team Player", icon: "\uD83E\uDD1D", css: "badge-teal",
-      title: "Comments on others' MRs > 2x comments on own (min 5 on others)",
+      title: "Comments on others' MRs > ratio of comments on own",
       qualify(c) {
+        const config = BADGE.team_player;
+        if (!config.enabled) return false;
         const onOthers = c.comments - (c.commentsOnOwn || 0);
         const onOwn = c.commentsOnOwn || 0;
-        return onOthers >= 5 && onOthers > 2 * onOwn;
+        return onOthers >= config.threshold && onOthers > config.ratio * onOwn;
       },
     },
     {
       id: "globe_trotter", label: "Globe Trotter", icon: "\uD83C\uDF10", css: "badge-blue",
-      title: "Contributes to 3+ distinct repositories",
+      title: "Contributes to multiple repositories",
       qualify(c) {
+        const config = BADGE.globe_trotter;
+        if (!config.enabled) return false;
         const repos = new Set(c.authored_mrs.map((mr) => mr.repoPath || mr.repoName));
-        return repos.size >= 3;
+        return repos.size >= config.threshold;
       },
     },
   ];
@@ -1342,6 +1399,18 @@
     priority_undefined: "Undefined priority",
   };
 
+  const BADGE_LABELS = {
+    merge_machine: "⚡ Merge Machine",
+    review_guru: "👁 Review Guru",
+    commentator: "💬 Commentator",
+    code_colossus: "⛰ Code Colossus",
+    the_eraser: "🧹 The Eraser",
+    bug_slayer: "🐛 Bug Slayer",
+    perfectionist: "✨ Perfectionist",
+    team_player: "🤝 Team Player",
+    globe_trotter: "🌍 Globe Trotter",
+  };
+
   const settingsBtn = $("#btn-settings");
   const settingsOverlay = $("#settings-overlay");
   const settingsBody = $("#settings-body");
@@ -1353,10 +1422,21 @@
     return localStorage.getItem(SCORE_STORAGE_KEY) !== null;
   }
 
+  function hasCustomBadgeOverrides() {
+    return localStorage.getItem(BADGE_STORAGE_KEY) !== null;
+  }
+
   function openSettings() {
     settingsBody.innerHTML = "";
-    const keys = Object.keys(SCORE_LABELS);
-    for (const key of keys) {
+
+    // Score settings section
+    const scoreHeader = document.createElement("h3");
+    scoreHeader.textContent = "Scoring Weights";
+    scoreHeader.style.cssText = "margin: 0 0 0.75rem; color: var(--accent); font-size: 0.9rem; font-weight: 700;";
+    settingsBody.appendChild(scoreHeader);
+
+    const scoreKeys = Object.keys(SCORE_LABELS);
+    for (const key of scoreKeys) {
       const row = document.createElement("div");
       row.className = "setting-row";
       const val = SCORE[key] ?? SCORE_FILE[key] ?? 0;
@@ -1366,6 +1446,57 @@
         `<input class="setting-input" id="sc-${key}" type="number" step="any" data-key="${key}" value="${val}">`;
       settingsBody.appendChild(row);
     }
+
+    // Badge settings section
+    const badgeHeader = document.createElement("h3");
+    badgeHeader.textContent = "Badge Configuration";
+    badgeHeader.style.cssText = "margin: 1.5rem 0 0.75rem; color: var(--accent); font-size: 0.9rem; font-weight: 700;";
+    settingsBody.appendChild(badgeHeader);
+
+    const badgeKeys = Object.keys(BADGE_LABELS);
+    for (const key of badgeKeys) {
+      const config = BADGE[key] ?? BADGE_FILE[key] ?? {};
+      const isCustom = hasCustomBadgeOverrides() && JSON.stringify(BADGE[key]) !== JSON.stringify(BADGE_FILE[key]);
+
+      // Enabled checkbox
+      const enabledRow = document.createElement("div");
+      enabledRow.className = "setting-row";
+      enabledRow.innerHTML =
+        `<label class="setting-label" for="bg-${key}-enabled">${BADGE_LABELS[key]} Enabled${isCustom ? '<span class="modal-custom-badge">custom</span>' : ''}</label>` +
+        `<input class="setting-checkbox" id="bg-${key}-enabled" type="checkbox" data-badge="${key}" data-prop="enabled" ${config.enabled ? 'checked' : ''}>`;
+      settingsBody.appendChild(enabledRow);
+
+      // Threshold input
+      if (config.threshold !== undefined) {
+        const thresholdRow = document.createElement("div");
+        thresholdRow.className = "setting-row";
+        thresholdRow.innerHTML =
+          `<label class="setting-label" for="bg-${key}-threshold">  └ Threshold</label>` +
+          `<input class="setting-input" id="bg-${key}-threshold" type="number" step="any" data-badge="${key}" data-prop="threshold" value="${config.threshold}">`;
+        settingsBody.appendChild(thresholdRow);
+      }
+
+      // Percentile input
+      if (config.percentile !== undefined) {
+        const percentileRow = document.createElement("div");
+        percentileRow.className = "setting-row";
+        percentileRow.innerHTML =
+          `<label class="setting-label" for="bg-${key}-percentile">  └ Top Percentile (0.1 = 10%)</label>` +
+          `<input class="setting-input" id="bg-${key}-percentile" type="number" step="0.01" min="0" max="1" data-badge="${key}" data-prop="percentile" value="${config.percentile}">`;
+        settingsBody.appendChild(percentileRow);
+      }
+
+      // Ratio input
+      if (config.ratio !== undefined) {
+        const ratioRow = document.createElement("div");
+        ratioRow.className = "setting-row";
+        ratioRow.innerHTML =
+          `<label class="setting-label" for="bg-${key}-ratio">  └ Ratio</label>` +
+          `<input class="setting-input" id="bg-${key}-ratio" type="number" step="0.1" data-badge="${key}" data-prop="ratio" value="${config.ratio}">`;
+        settingsBody.appendChild(ratioRow);
+      }
+    }
+
     settingsOverlay.hidden = false;
   }
 
@@ -1374,20 +1505,41 @@
   }
 
   function saveSettings() {
-    const inputs = settingsBody.querySelectorAll(".setting-input");
-    const overrides = {};
-    for (const input of inputs) {
-      overrides[input.dataset.key] = parseFloat(input.value) || 0;
+    // Save score settings
+    const scoreInputs = settingsBody.querySelectorAll(".setting-input[data-key]");
+    const scoreOverrides = {};
+    for (const input of scoreInputs) {
+      scoreOverrides[input.dataset.key] = parseFloat(input.value) || 0;
     }
-    localStorage.setItem(SCORE_STORAGE_KEY, JSON.stringify(overrides));
-    SCORE = { ...SCORE_FILE, ...overrides };
+    localStorage.setItem(SCORE_STORAGE_KEY, JSON.stringify(scoreOverrides));
+    SCORE = { ...SCORE_FILE, ...scoreOverrides };
+
+    // Save badge settings
+    const badgeOverrides = { ...BADGE_FILE };
+    const badgeInputs = settingsBody.querySelectorAll("[data-badge]");
+    for (const input of badgeInputs) {
+      const badgeKey = input.dataset.badge;
+      const prop = input.dataset.prop;
+      if (!badgeOverrides[badgeKey]) badgeOverrides[badgeKey] = {};
+
+      if (input.type === "checkbox") {
+        badgeOverrides[badgeKey][prop] = input.checked;
+      } else {
+        badgeOverrides[badgeKey][prop] = parseFloat(input.value) || 0;
+      }
+    }
+    localStorage.setItem(BADGE_STORAGE_KEY, JSON.stringify(badgeOverrides));
+    BADGE = badgeOverrides;
+
     closeSettings();
     render();
   }
 
   function resetSettings() {
     localStorage.removeItem(SCORE_STORAGE_KEY);
+    localStorage.removeItem(BADGE_STORAGE_KEY);
     SCORE = { ...SCORE_FILE };
+    BADGE = { ...BADGE_FILE };
     closeSettings();
     render();
   }
@@ -1700,5 +1852,5 @@
   }
 
   // --- Init ---
-  loadScoreConfig().then(loadData);
+  Promise.all([loadScoreConfig(), loadBadgeConfig()]).then(loadData);
 })();

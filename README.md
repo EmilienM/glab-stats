@@ -76,6 +76,7 @@ It ranks contributors using a configurable scoring system based on MRs authored,
 ## Configuration
 
 - **Scoring weights** — Edit `frontend/score-config.json` or use the Settings modal in the UI
+- **Badge criteria** — Edit `frontend/badge-config.json` or use the Settings modal to configure thresholds and percentiles
 - **Repository filtering** — Add `skip_scoring: [lines, comments, approvals]` to exclude categories per repo
 - **Jira integration** — Extracts ticket IDs from MR titles (e.g., `RHEL-1234: fix bug`)
 
