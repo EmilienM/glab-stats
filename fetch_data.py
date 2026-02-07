@@ -18,7 +18,7 @@ from tqdm import tqdm
 GITLAB_API_BASE = "https://gitlab.com/api/v4"
 JIRA_BASE_URL = "https://issues.redhat.com"
 OUTPUT_PATH = os.path.join(os.path.dirname(__file__), "frontend", "data", "data.json")
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "repos.yaml")
+DEFAULT_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "repos.yaml")
 
 JIRA_KEY_RE = re.compile(r"([A-Z][A-Z0-9]+-\d+)")
 
@@ -44,8 +44,10 @@ def _checked_get(session, url, **kwargs):
     return resp
 
 
-def load_config():
-    with open(CONFIG_PATH, encoding="utf-8") as f:
+def load_config(config_path=None):
+    if config_path is None:
+        config_path = DEFAULT_CONFIG_PATH
+    with open(config_path, encoding="utf-8") as f:
         config = yaml.safe_load(f)
     raw = config.get("repositories", [])
     repos = []
@@ -264,6 +266,13 @@ def main():
         default=4,
         help="Number of concurrent threads for fetching MR details (default: 4)",
     )
+    parser.add_argument(
+        "-r",
+        "--repos",
+        type=str,
+        default=None,
+        help=f"Path to repos configuration file (default: {DEFAULT_CONFIG_PATH})",
+    )
     args = parser.parse_args()
 
     token = os.environ.get("GITLAB_TOKEN")
@@ -271,9 +280,10 @@ def main():
         print("Error: GITLAB_TOKEN environment variable is not set.", file=sys.stderr)
         sys.exit(1)
 
-    repos = load_config()
+    repos = load_config(args.repos)
     if not repos:
-        print("Error: No repositories found in repos.yaml.", file=sys.stderr)
+        config_file = args.repos or DEFAULT_CONFIG_PATH
+        print(f"Error: No repositories found in {config_file}.", file=sys.stderr)
         sys.exit(1)
 
     session = requests.Session()

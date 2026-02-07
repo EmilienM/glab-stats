@@ -98,6 +98,47 @@
     </div>
   </div>
 
+  <!-- Contributor Detail Modal -->
+  <div id="detail-overlay" class="modal-overlay" hidden>
+    <div class="modal detail-modal">
+      <div class="modal-header">
+        <div class="detail-header-info">
+          <img id="detail-avatar" class="detail-avatar" src="" alt="" hidden>
+          <div>
+            <div id="detail-name" class="modal-title"></div>
+            <div id="detail-username" class="lb-username"></div>
+          </div>
+        </div>
+        <button id="detail-close" class="modal-close" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <section class="detail-section">
+          <h3 class="detail-section-title">Metrics</h3>
+          <div id="detail-metrics" class="detail-metrics-grid"></div>
+        </section>
+        <section class="detail-section">
+          <div class="detail-timeline-header">
+            <h3 class="detail-section-title">Activity Over Time</h3>
+            <div class="granularity-toggle" id="detail-gran-toggle">
+              <button class="gran-btn" data-gran="week">Week</button>
+              <button class="gran-btn active" data-gran="month">Month</button>
+              <button class="gran-btn" data-gran="year">Year</button>
+            </div>
+          </div>
+          <div id="detail-charts"></div>
+        </section>
+        <section class="detail-section">
+          <h3 class="detail-section-title">Repositories</h3>
+          <div id="detail-repos"></div>
+        </section>
+        <section class="detail-section">
+          <h3 class="detail-section-title">Recent Merge Requests</h3>
+          <div id="detail-mrs"></div>
+        </section>
+      </div>
+    </div>
+  </div>
+
   <script src="app.js?v=3"></script>
 </body>
 </html>

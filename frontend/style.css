@@ -404,6 +404,7 @@ body {
   padding: 0.85rem 1.25rem;
   border-bottom: 1px solid var(--border);
   transition: background 0.1s;
+  cursor: pointer;
 }
 
 .lb-row:last-child {
@@ -665,6 +666,206 @@ body {
   vertical-align: middle;
 }
 
+/* ===== Contributor Detail Modal ===== */
+.detail-modal {
+  max-width: 900px;
+  max-height: 90vh;
+}
+
+.detail-header-info {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.detail-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid var(--border);
+}
+
+.detail-section {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem 1.25rem;
+}
+
+.detail-section-title {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+  font-weight: 700;
+  margin-bottom: 0.75rem;
+}
+
+.detail-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 0.75rem;
+}
+
+.detail-metric-card {
+  text-align: center;
+  padding: 0.75rem 0.5rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.detail-metric-value {
+  font-size: 1.4rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+}
+
+.detail-metric-label {
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  margin-top: 0.15rem;
+}
+
+.detail-timeline-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+
+.detail-timeline-header .detail-section-title {
+  margin-bottom: 0;
+}
+
+.detail-chart-card {
+  margin-bottom: 1.25rem;
+}
+
+.detail-chart-card:last-child {
+  margin-bottom: 0;
+}
+
+.detail-chart-card-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 0.4rem;
+}
+
+.detail-chart-card-wrap {
+  position: relative;
+  height: 160px;
+}
+
+.detail-repo-header,
+.detail-repo-row {
+  display: grid;
+  grid-template-columns: 1fr 4.5rem 4.5rem 5.5rem 5.5rem;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.4rem 0;
+  font-size: 0.8rem;
+}
+
+.detail-repo-header {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  font-weight: 700;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.detail-repo-row {
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border);
+}
+
+.detail-repo-row:last-child {
+  border-bottom: none;
+}
+
+.detail-repo-name {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.detail-repo-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.detail-repo-add {
+  color: var(--stat-merged-border);
+}
+
+.detail-repo-del {
+  color: var(--stat-closed-border);
+}
+
+.detail-mr-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0;
+  font-size: 0.8rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.detail-mr-item:last-child {
+  border-bottom: none;
+}
+
+.detail-mr-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.detail-mr-dot-merged { background: var(--stat-merged-border); }
+.detail-mr-dot-opened { background: var(--stat-opened-border); }
+.detail-mr-dot-closed { background: var(--stat-closed-border); }
+
+.detail-mr-title {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.detail-mr-title a {
+  color: var(--text-primary);
+  text-decoration: none;
+}
+
+.detail-mr-title a:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.detail-mr-repo {
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.detail-mr-date {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 /* ===== Empty State ===== */
 .empty-state {
   text-align: center;
@@ -734,6 +935,24 @@ body {
     grid-column: 2;
     justify-self: end;
     font-size: 1.1rem;
+  }
+
+  .detail-modal {
+    max-width: 95vw;
+  }
+
+  .detail-metrics-grid {
+    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  }
+
+  .detail-repo-header,
+  .detail-repo-row {
+    grid-template-columns: 1fr 3.5rem 3.5rem 4.5rem 4.5rem;
+    font-size: 0.7rem;
+  }
+
+  .detail-mr-item {
+    flex-wrap: wrap;
   }
 }
 

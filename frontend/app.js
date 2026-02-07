@@ -232,6 +232,19 @@
   const scoreLegendEl = $("#score-legend");
   const scoreLegendItems = $("#score-legend-items");
   let timelineChart = null;
+  const detailOverlay = $("#detail-overlay");
+  const detailClose = $("#detail-close");
+  const detailAvatar = $("#detail-avatar");
+  const detailName = $("#detail-name");
+  const detailUsername = $("#detail-username");
+  const detailMetrics = $("#detail-metrics");
+  const detailRepos = $("#detail-repos");
+  const detailMRs = $("#detail-mrs");
+  const detailChartsEl = $("#detail-charts");
+  const detailGranToggle = $("#detail-gran-toggle");
+  let detailCharts = [];
+  let detailGranularity = "month";
+  let detailCurrentUsername = null;
   let currentGranularity = "week";
   let selectedPeriodKey = null;   // null = current period, string = a specific bucket key
   let timelineBucketKeys = [];    // raw keys for each bar index
@@ -345,6 +358,14 @@
     currentGranularity = btn.dataset.gran;
     selectedPeriodKey = null;
     render();
+  });
+
+  // --- Contributor detail click ---
+  leaderboardBody.addEventListener("click", (e) => {
+    const row = e.target.closest(".lb-row");
+    if (!row) return;
+    const username = row.dataset.username;
+    if (username) openContributorDetail(username);
   });
 
   // --- Time-period filter for leaderboard ---
@@ -503,7 +524,7 @@
         : `<div class="lb-avatar-placeholder">${escapeHtml(c.name.charAt(0).toUpperCase())}</div>`;
 
       return `
-        <div class="lb-row">
+        <div class="lb-row" data-username="${escapeHtml(c.username)}">
           <span class="lb-rank${rankClass}">${rank}</span>
           <div class="lb-contributor">
             ${avatarHtml}
@@ -934,6 +955,291 @@
   settingsReset.addEventListener("click", resetSettings);
   settingsOverlay.addEventListener("click", (e) => {
     if (e.target === settingsOverlay) closeSettings();
+  });
+
+  // --- Contributor Detail Modal ---
+  function openContributorDetail(username) {
+    const mrs = getFilteredMRs();
+    const contributors = buildContributors(mrs);
+    const contributor = contributors.find((c) => c.username === username);
+    if (!contributor) return;
+
+    // Header
+    if (contributor.avatar_url) {
+      detailAvatar.src = contributor.avatar_url;
+      detailAvatar.hidden = false;
+    } else {
+      detailAvatar.hidden = true;
+    }
+    detailName.textContent = contributor.name;
+    detailUsername.textContent = `@${contributor.username}`;
+
+    detailCurrentUsername = username;
+    renderDetailMetrics(contributor);
+    renderDetailCharts(username, detailGranularity);
+    renderDetailRepos(contributor);
+    renderDetailMRs(contributor);
+
+    detailOverlay.hidden = false;
+    document.body.style.overflow = "hidden";
+  }
+
+  function closeContributorDetail() {
+    detailOverlay.hidden = true;
+    document.body.style.overflow = "";
+    for (const chart of detailCharts) chart.destroy();
+    detailCharts = [];
+    detailCurrentUsername = null;
+  }
+
+  function renderDetailMetrics(contributor) {
+    detailMetrics.innerHTML = METRICS.map((m) => {
+      const val = m.compute(contributor);
+      return `<div class="detail-metric-card">
+        <div class="detail-metric-value">${val.toLocaleString()}</div>
+        <div class="detail-metric-label">${escapeHtml(m.label)}</div>
+      </div>`;
+    }).join("");
+  }
+
+  // Maps the period toggle to a fixed time range and bucket granularity.
+  // "week"  → last 7 days,    daily   buckets
+  // "month" → last ~4 weeks,  weekly  buckets
+  // "year"  → last 12 months, monthly buckets
+  function getDetailRange(period) {
+    const now = new Date();
+    const nowUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+
+    if (period === "week") {
+      const start = new Date(nowUTC);
+      start.setUTCDate(start.getUTCDate() - 6);
+      return { gran: "day", startKey: toKey(start), endKey: toKey(nowUTC) };
+    }
+    if (period === "month") {
+      const curMonday = mondayOf(nowUTC);
+      const start = new Date(curMonday);
+      start.setUTCDate(start.getUTCDate() - 21); // 3 weeks back → 4 weeks total
+      return { gran: "week", startKey: toKey(start), endKey: toKey(curMonday) };
+    }
+    // year → last 12 months
+    const endKey = `${nowUTC.getUTCFullYear()}-${String(nowUTC.getUTCMonth() + 1).padStart(2, "0")}`;
+    const startDate = new Date(Date.UTC(nowUTC.getUTCFullYear(), nowUTC.getUTCMonth() - 11, 1));
+    const startKey = `${startDate.getUTCFullYear()}-${String(startDate.getUTCMonth() + 1).padStart(2, "0")}`;
+    return { gran: "month", startKey, endKey };
+  }
+
+  function computePerBucketData(username, allMRsFiltered, gran, startKey, endKey) {
+    const bucketData = new Map();
+
+    function ensure(key) {
+      if (!bucketData.has(key)) {
+        bucketData.set(key, { authored: 0, merged: 0, comments: 0, approvals: 0, adds: 0, dels: 0, priorityPts: 0 });
+      }
+      return bucketData.get(key);
+    }
+
+    for (const mr of allMRsFiltered) {
+      const key = getBucketKey(mr.created_at, gran);
+      if (key < startKey || key > endKey) continue;
+      const skip = mr.skipScoring || new Set();
+
+      if (mr.author.username === username) {
+        const b = ensure(key);
+        b.authored++;
+        if (mr.state === "merged") b.merged++;
+        if (!skip.has("lines")) {
+          b.adds += mr.additions || 0;
+          b.dels += mr.deletions || 0;
+        }
+        if (mr.jira_key) {
+          b.priorityPts += SCORE[priorityScoreKey(mr.jira_priority)] || 0;
+        }
+      }
+
+      if (!skip.has("comments")) {
+        for (const c of (mr.commenters || [])) {
+          if (c.username === username) ensure(key).comments += c.count;
+        }
+      }
+
+      if (!skip.has("approvals")) {
+        for (const a of (mr.approvers || [])) {
+          if (a.username === username) ensure(key).approvals++;
+        }
+      }
+    }
+
+    // Generate all buckets across the full range, filling zeros for empty periods
+    const result = [];
+    let cur = startKey;
+    while (cur <= endKey) {
+      const d = bucketData.get(cur) || { authored: 0, merged: 0, comments: 0, approvals: 0, adds: 0, dels: 0, priorityPts: 0 };
+      const nonMerged = d.authored - d.merged;
+      d.score = Math.round(
+        (nonMerged * SCORE.mr_open) + (d.merged * SCORE.mr_merged) +
+        (d.comments * SCORE.comment) + (d.approvals * SCORE.approval) +
+        (d.adds * SCORE.line_added) + (d.dels * SCORE.line_deleted) + d.priorityPts
+      );
+      result.push({ key: cur, label: formatBucketLabel(cur, gran), ...d });
+      cur = advanceBucket(cur, gran);
+    }
+    return result;
+  }
+
+  function renderDetailCharts(username, period) {
+    for (const chart of detailCharts) chart.destroy();
+    detailCharts = [];
+    detailChartsEl.innerHTML = "";
+
+    const { gran, startKey, endKey } = getDetailRange(period);
+    const data = computePerBucketData(username, getFilteredMRs(), gran, startKey, endKey);
+    if (data.length === 0) {
+      detailChartsEl.innerHTML = '<div style="color:var(--text-muted);font-size:0.8rem;">No activity data</div>';
+      return;
+    }
+
+    const labels = data.map((d) => d.label);
+    const hasPriority = data.some((d) => d.priorityPts > 0);
+
+    const configs = [
+      { title: "Score",       values: data.map((d) => d.score),       color: "#6366f1" },
+      { title: "MRs Merged",  values: data.map((d) => d.merged),      color: "#10b981" },
+      { title: "Comments",    values: data.map((d) => d.comments),     color: "#3b82f6" },
+      { title: "Approvals",   values: data.map((d) => d.approvals),    color: "#f59e0b" },
+    ];
+
+    if (hasPriority) {
+      configs.splice(2, 0, { title: "Bug Priority", values: data.map((d) => d.priorityPts), color: "#ef4444" });
+    }
+
+    const colors = getChartColors();
+
+    for (const cfg of configs) {
+      if (cfg.values.every((v) => v === 0)) continue;
+
+      const wrap = document.createElement("div");
+      wrap.className = "detail-chart-card";
+      wrap.innerHTML = `<div class="detail-chart-card-title">${cfg.title}</div><div class="detail-chart-card-wrap"><canvas></canvas></div>`;
+      detailChartsEl.appendChild(wrap);
+
+      const canvas = wrap.querySelector("canvas");
+      const chart = new Chart(canvas, {
+        type: "bar",
+        data: {
+          labels,
+          datasets: [{
+            data: cfg.values,
+            backgroundColor: cfg.color + "80",
+            borderColor: cfg.color,
+            borderWidth: 1,
+            borderRadius: 3,
+          }],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: "rgba(0,0,0,0.8)",
+              titleFont: { size: 11 },
+              bodyFont: { size: 10 },
+              padding: 8,
+              cornerRadius: 6,
+            },
+          },
+          scales: {
+            x: {
+              grid: { display: false },
+              ticks: { color: colors.text, font: { size: 9 }, maxRotation: 45, autoSkip: true },
+            },
+            y: {
+              beginAtZero: true,
+              grid: { color: colors.grid },
+              ticks: { color: colors.text, font: { size: 9 }, precision: 0 },
+            },
+          },
+        },
+      });
+      detailCharts.push(chart);
+    }
+  }
+
+  function renderDetailRepos(contributor) {
+    const mrs = contributor.authored_mrs;
+    const repoMap = new Map();
+    for (const mr of mrs) {
+      if (!repoMap.has(mr.repoName)) {
+        repoMap.set(mr.repoName, { count: 0, merged: 0, adds: 0, dels: 0 });
+      }
+      const r = repoMap.get(mr.repoName);
+      r.count++;
+      if (mr.state === "merged") r.merged++;
+      r.adds += mr.additions || 0;
+      r.dels += mr.deletions || 0;
+    }
+
+    const sorted = [...repoMap.entries()].sort((a, b) => b[1].count - a[1].count);
+
+    if (sorted.length === 0) {
+      detailRepos.innerHTML = '<div style="color:var(--text-muted);font-size:0.8rem;">No repositories</div>';
+      return;
+    }
+
+    detailRepos.innerHTML =
+      `<div class="detail-repo-header">
+        <span>Repository</span><span class="detail-repo-num">MRs</span><span class="detail-repo-num">Merged</span><span class="detail-repo-num">Additions</span><span class="detail-repo-num">Deletions</span>
+      </div>` +
+      sorted.map(([name, s]) =>
+        `<div class="detail-repo-row">
+          <span class="detail-repo-name" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
+          <span class="detail-repo-num">${s.count}</span>
+          <span class="detail-repo-num">${s.merged}</span>
+          <span class="detail-repo-num detail-repo-add">+${s.adds.toLocaleString()}</span>
+          <span class="detail-repo-num detail-repo-del">\u2212${s.dels.toLocaleString()}</span>
+        </div>`
+      ).join("");
+  }
+
+  function renderDetailMRs(contributor) {
+    const mrs = [...contributor.authored_mrs]
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+      .slice(0, 20);
+
+    if (mrs.length === 0) {
+      detailMRs.innerHTML = '<div style="color:var(--text-muted);font-size:0.8rem;">No merge requests</div>';
+      return;
+    }
+
+    detailMRs.innerHTML = mrs.map((mr) => {
+      const dotClass = `detail-mr-dot-${mr.state}`;
+      const d = new Date(mr.created_at);
+      const dateStr = `${SHORT_MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()}`;
+      const url = mr.web_url ? escapeHtml(mr.web_url) : "#";
+      return `<div class="detail-mr-item">
+        <span class="detail-mr-dot ${dotClass}"></span>
+        <span class="detail-mr-title"><a href="${url}" target="_blank" rel="noopener">${escapeHtml(mr.title)}</a></span>
+        <span class="detail-mr-repo">${escapeHtml(mr.repoName)}</span>
+        <span class="detail-mr-date">${dateStr}</span>
+      </div>`;
+    }).join("");
+  }
+
+  detailGranToggle.addEventListener("click", (e) => {
+    const btn = e.target.closest(".gran-btn");
+    if (!btn) return;
+    detailGranToggle.querySelectorAll(".gran-btn").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    detailGranularity = btn.dataset.gran;
+    if (detailCurrentUsername) renderDetailCharts(detailCurrentUsername, detailGranularity);
+  });
+
+  detailClose.addEventListener("click", closeContributorDetail);
+  detailOverlay.addEventListener("click", (e) => {
+    if (e.target === detailOverlay) closeContributorDetail();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !detailOverlay.hidden) closeContributorDetail();
   });
 
   // --- Helpers ---
