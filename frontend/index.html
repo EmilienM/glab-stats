@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>GitLab Contributions Tracker</title>
-  <link rel="stylesheet" href="style.css?v=3">
+  <link rel="stylesheet" href="style.css?v=5">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2/dist/jspdf.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3/dist/jspdf.plugin.autotable.min.js"></script>
@@ -65,8 +65,8 @@
           <h2 class="timeline-title">Activity Timeline</h2>
           <div class="granularity-toggle" id="granularity-toggle">
             <button class="gran-btn" data-gran="day">Day</button>
-            <button class="gran-btn active" data-gran="week">Week</button>
-            <button class="gran-btn" data-gran="month">Month</button>
+            <button class="gran-btn" data-gran="week">Week</button>
+            <button class="gran-btn active" data-gran="month">Month</button>
             <button class="gran-btn" data-gran="year">Year</button>
           </div>
         </div>
@@ -124,23 +124,33 @@
       </div>
       <div class="modal-body">
         <section class="detail-section">
+          <div class="detail-timeline-header">
+            <h3 class="detail-section-title">Activity Over Time</h3>
+            <div class="detail-period-controls">
+              <div class="granularity-toggle" id="detail-gran-toggle">
+                <button class="gran-btn" data-gran="week">Week</button>
+                <button class="gran-btn active" data-gran="month">Month</button>
+                <button class="gran-btn" data-gran="year">Year</button>
+                <button class="gran-btn" data-gran="all">All</button>
+              </div>
+              <div class="detail-period-nav" id="detail-period-nav">
+                <button class="detail-period-btn" id="detail-period-prev" aria-label="Previous period">&#8249;</button>
+                <span class="detail-period-label" id="detail-period-label"></span>
+                <button class="detail-period-btn" id="detail-period-next" aria-label="Next period">&#8250;</button>
+              </div>
+            </div>
+          </div>
+        </section>
+        <section class="detail-section">
           <h3 class="detail-section-title">Metrics</h3>
           <div id="detail-metrics" class="detail-metrics-grid"></div>
         </section>
         <section class="detail-section">
-          <h3 class="detail-section-title">Top Collaborators</h3>
-          <div id="detail-collaborators"></div>
+          <div id="detail-charts"></div>
         </section>
         <section class="detail-section">
-          <div class="detail-timeline-header">
-            <h3 class="detail-section-title">Activity Over Time</h3>
-            <div class="granularity-toggle" id="detail-gran-toggle">
-              <button class="gran-btn" data-gran="week">Week</button>
-              <button class="gran-btn active" data-gran="month">Month</button>
-              <button class="gran-btn" data-gran="year">Year</button>
-            </div>
-          </div>
-          <div id="detail-charts"></div>
+          <h3 class="detail-section-title">Top Collaborators</h3>
+          <div id="detail-collaborators"></div>
         </section>
         <section class="detail-section">
           <h3 class="detail-section-title">Repositories</h3>
@@ -166,6 +176,6 @@
     </div>
   </footer>
 
-  <script src="app.js?v=3"></script>
+  <script src="app.js?v=6"></script>
 </body>
 </html>

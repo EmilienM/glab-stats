@@ -927,10 +927,56 @@ body {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+  gap: 0.5rem;
 }
 
 .detail-timeline-header .detail-section-title {
   margin-bottom: 0;
+}
+
+.detail-period-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.detail-period-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.detail-period-btn {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  cursor: pointer;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-size: 1.1rem;
+  line-height: 1;
+  font-weight: 700;
+  transition: background 0.15s;
+}
+
+.detail-period-btn:hover:not(:disabled) {
+  background: var(--accent-subtle);
+}
+
+.detail-period-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.detail-period-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  min-width: 100px;
+  text-align: center;
+  white-space: nowrap;
 }
 
 .detail-chart-card {
