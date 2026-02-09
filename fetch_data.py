@@ -68,6 +68,9 @@ CO_AUTHOR_PATTERNS = [
     ]
 ]
 
+CO_AUTHOR_RE = re.compile(r"Co-Authored-By:\s*(.+)", re.IGNORECASE)
+CO_AUTHOR_NAME_EMAIL_RE = re.compile(r"^(.+?)\s*<([^>]+)>$")
+
 
 def detect_ai_coauthor(description):
     """Detect AI co-authorship from an MR description.
@@ -89,6 +92,41 @@ def detect_ai_coauthor(description):
                 if AI_REGEX.search(value):
                     return True
     return False
+
+
+def extract_human_coauthors(description):
+    """Extract human co-authors from Co-Authored-By lines in an MR description.
+
+    Parses only Co-Authored-By trailers, skips entries that match AI patterns,
+    and returns a list of {"name": ..., "email": ...} dicts for human co-authors.
+    """
+    if not description:
+        return []
+    coauthors = []
+    for line in description.split("\n"):
+        line = line.strip()
+        match = CO_AUTHOR_RE.search(line)
+        if not match:
+            continue
+        value = match.group(1).strip()
+        # Remove Signed-off-by trailer if appended on the same line
+        if "signed-off-by" in value.lower():
+            value = re.split(r"\s+signed-off-by\s*:", value, flags=re.IGNORECASE)[0].strip()
+        # Skip AI co-authors
+        if AI_REGEX.search(value):
+            continue
+        # Extract name and email from "Name <email>" format
+        name_email = CO_AUTHOR_NAME_EMAIL_RE.match(value)
+        if name_email:
+            coauthors.append(
+                {
+                    "name": name_email.group(1).strip(),
+                    "email": name_email.group(2).strip(),
+                }
+            )
+        else:
+            coauthors.append({"name": value, "email": ""})
+    return coauthors
 
 
 def is_bot_account(username, bot_accounts):
@@ -191,6 +229,7 @@ def fetch_merge_requests(session, project_path, limit, bot_accounts):
                     "updated_at": mr["updated_at"],
                     "web_url": mr["web_url"],
                     "ai_coauthored": detect_ai_coauthor(mr_description),
+                    "co_authors": extract_human_coauthors(mr_description),
                     "author": {
                         "username": author_username,
                         "name": author.get("name", "Unknown"),

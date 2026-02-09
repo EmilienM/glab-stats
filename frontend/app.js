@@ -420,6 +420,7 @@
   const detailRepos = $("#detail-repos");
   const detailMRs = $("#detail-mrs");
   const detailBadges = $("#detail-badges");
+  const detailCollaborators = $("#detail-collaborators");
   const detailChartsEl = $("#detail-charts");
   const detailGranToggle = $("#detail-gran-toggle");
   let detailCharts = [];
@@ -1585,6 +1586,110 @@
     if (e.target === settingsOverlay) closeSettings();
   });
 
+  // --- Collaboration Map ---
+  function buildCollaborationMap(username, mrs, contributors) {
+    const collabMap = new Map();
+    // Build a lookup of known contributor names (lowercase) → username
+    const nameToUsername = new Map();
+    for (const c of contributors) {
+      if (c.name) nameToUsername.set(c.name.toLowerCase(), c.username);
+    }
+
+    function ensureCollab(key, name, avatarUrl) {
+      if (key === username) return null; // skip self
+      if (!collabMap.has(key)) {
+        collabMap.set(key, {
+          username: key,
+          name: name || key,
+          avatar_url: avatarUrl || "",
+          reviews_given: 0,
+          reviews_received: 0,
+          comments_given: 0,
+          comments_received: 0,
+          coauthored: 0,
+        });
+      }
+      return collabMap.get(key);
+    }
+
+    for (const mr of mrs) {
+      const isAuthor = mr.author.username === username;
+
+      // Reviews (approvals)
+      if (isAuthor) {
+        // Others who approved this user's MR → reviews received
+        for (const a of (mr.approvers || [])) {
+          const entry = ensureCollab(a.username, a.name, a.avatar_url);
+          if (entry) entry.reviews_received++;
+        }
+      } else {
+        // This user approved someone else's MR → reviews given to that author
+        for (const a of (mr.approvers || [])) {
+          if (a.username === username) {
+            const entry = ensureCollab(mr.author.username, mr.author.name, mr.author.avatar_url);
+            if (entry) entry.reviews_given++;
+          }
+        }
+      }
+
+      // Comments
+      if (isAuthor) {
+        // Others who commented on this user's MR → comments received
+        for (const c of (mr.commenters || [])) {
+          if (c.username === username) continue;
+          const entry = ensureCollab(c.username, c.name, c.avatar_url);
+          if (entry) entry.comments_received += c.count;
+        }
+      } else {
+        // This user commented on someone else's MR → comments given to that author
+        for (const c of (mr.commenters || [])) {
+          if (c.username === username) {
+            const entry = ensureCollab(mr.author.username, mr.author.name, mr.author.avatar_url);
+            if (entry) entry.comments_given += c.count;
+          }
+        }
+      }
+
+      // Co-authors
+      const coAuthors = mr.co_authors || [];
+      if (isAuthor) {
+        for (const ca of coAuthors) {
+          const matchedUsername = nameToUsername.get(ca.name.toLowerCase());
+          if (matchedUsername && matchedUsername !== username) {
+            const matched = contributors.find((c) => c.username === matchedUsername);
+            const entry = ensureCollab(matchedUsername, matched ? matched.name : ca.name, matched ? matched.avatar_url : "");
+            if (entry) entry.coauthored++;
+          } else if (!matchedUsername) {
+            const key = "coauthor:" + ca.name.toLowerCase();
+            const entry = ensureCollab(key, ca.name, "");
+            if (entry) entry.coauthored++;
+          }
+        }
+      } else {
+        // Check if the current user is listed as a co-author on someone else's MR
+        for (const ca of coAuthors) {
+          const matchedUsername = nameToUsername.get(ca.name.toLowerCase());
+          if (matchedUsername === username) {
+            const entry = ensureCollab(mr.author.username, mr.author.name, mr.author.avatar_url);
+            if (entry) entry.coauthored++;
+          }
+        }
+      }
+    }
+
+    // Sort by total collaboration score
+    const result = [...collabMap.values()]
+      .map((c) => ({
+        ...c,
+        total: c.reviews_given + c.reviews_received + c.comments_given + c.comments_received + c.coauthored,
+      }))
+      .filter((c) => c.total > 0)
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 10);
+
+    return result;
+  }
+
   // --- Contributor Detail Modal ---
   function openContributorDetail(username) {
     const mrs = getFilteredMRs();
@@ -1611,6 +1716,7 @@
 
     detailCurrentUsername = username;
     renderDetailMetrics(contributor);
+    renderDetailCollaborators(contributor, mrs, contributors);
     renderDetailCharts(username, detailGranularity);
     renderDetailRepos(contributor);
     renderDetailMRs(contributor);
@@ -1633,6 +1739,37 @@
       return `<div class="detail-metric-card">
         <div class="detail-metric-value">${val.toLocaleString()}</div>
         <div class="detail-metric-label">${escapeHtml(m.label)}</div>
+      </div>`;
+    }).join("");
+  }
+
+  function renderDetailCollaborators(contributor, mrs, contributors) {
+    const collabs = buildCollaborationMap(contributor.username, mrs, contributors);
+
+    if (collabs.length === 0) {
+      detailCollaborators.innerHTML = '<div style="color:var(--text-muted);font-size:0.8rem;">No collaborators found</div>';
+      return;
+    }
+
+    detailCollaborators.innerHTML = collabs.map((c) => {
+      const avatarHtml = c.avatar_url
+        ? `<img class="detail-collab-avatar" src="${escapeHtml(c.avatar_url)}" alt="" loading="lazy">`
+        : `<div class="detail-collab-avatar detail-collab-avatar-placeholder">${escapeHtml(c.name.charAt(0).toUpperCase())}</div>`;
+      const badges = [];
+      if (c.reviews_given) badges.push(`<span class="mini-badge mini-badge-merged">${c.reviews_given} review${c.reviews_given !== 1 ? "s" : ""} given</span>`);
+      if (c.reviews_received) badges.push(`<span class="mini-badge mini-badge-merged">${c.reviews_received} review${c.reviews_received !== 1 ? "s" : ""} received</span>`);
+      if (c.comments_given) badges.push(`<span class="mini-badge mini-badge-opened">${c.comments_given} comment${c.comments_given !== 1 ? "s" : ""} given</span>`);
+      if (c.comments_received) badges.push(`<span class="mini-badge mini-badge-opened">${c.comments_received} comment${c.comments_received !== 1 ? "s" : ""} received</span>`);
+      if (c.coauthored) badges.push(`<span class="mini-badge mini-badge-collab-purple">${c.coauthored} co-authored</span>`);
+      const displayUsername = c.username.startsWith("coauthor:") ? "" : `<span class="detail-collab-username">@${escapeHtml(c.username)}</span>`;
+      return `<div class="detail-collab-row">
+        ${avatarHtml}
+        <div class="detail-collab-name">
+          <span class="detail-collab-display-name">${escapeHtml(c.name)}</span>
+          ${displayUsername}
+        </div>
+        <div class="detail-collab-badges">${badges.join("")}</div>
+        <span class="detail-collab-total">${c.total}</span>
       </div>`;
     }).join("");
   }
