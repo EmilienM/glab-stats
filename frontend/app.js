@@ -507,21 +507,23 @@
 
   // --- Filters ---
   function repoDisplayLabel(fullPath) {
-    // Show short name if unique, otherwise add parent segments to disambiguate
+    // Always show parent/repo format (e.g. "base-images/app", "core/architecture-decision-records")
     const parts = fullPath.split("/");
-    const name = parts[parts.length - 1];
-    const dupes = repositories.filter((r) => r.name === name);
-    if (dupes.length <= 1) return name;
-    // Use last 2 segments (e.g. "rhaiis/pipeline" vs "rhai/pipeline")
     return parts.slice(-2).join("/");
   }
 
   function populateFilters() {
-    const paths = [...new Set(repositories.map((r) => r.full_path))].sort();
-    for (const path of paths) {
+    const paths = [...new Set(repositories.map((r) => r.full_path))];
+    // Create pairs of (path, displayLabel) and sort by display label
+    const pathsWithLabels = paths.map(path => ({
+      path,
+      label: repoDisplayLabel(path)
+    })).sort((a, b) => a.label.localeCompare(b.label));
+
+    for (const { path, label } of pathsWithLabels) {
       const opt = document.createElement("option");
       opt.value = path;
-      opt.textContent = repoDisplayLabel(path);
+      opt.textContent = label;
       filterRepo.appendChild(opt);
     }
   }
@@ -2092,17 +2094,18 @@
     const mrs = contributor.authored_mrs;
     const repoMap = new Map();
     for (const mr of mrs) {
-      if (!repoMap.has(mr.repoName)) {
-        repoMap.set(mr.repoName, { count: 0, merged: 0, adds: 0, dels: 0 });
+      const label = repoDisplayLabel(mr.repoPath);
+      if (!repoMap.has(label)) {
+        repoMap.set(label, { count: 0, merged: 0, adds: 0, dels: 0 });
       }
-      const r = repoMap.get(mr.repoName);
+      const r = repoMap.get(label);
       r.count++;
       if (mr.state === "merged") r.merged++;
       r.adds += mr.additions || 0;
       r.dels += mr.deletions || 0;
     }
 
-    const sorted = [...repoMap.entries()].sort((a, b) => b[1].count - a[1].count);
+    const sorted = [...repoMap.entries()].sort((a, b) => a[0].localeCompare(b[0]));
 
     if (sorted.length === 0) {
       detailRepos.innerHTML = '<div style="color:var(--text-muted);font-size:0.8rem;">No repositories</div>';
