@@ -1223,20 +1223,31 @@
       const pageH = doc.internal.pageSize.getHeight();
       let y = 15;
 
-      // Get contributor data
-      const mrs = getFilteredMRs();
-      const contributors = buildContributors(mrs);
-      const contributor = contributors.find((c) => c.username === detailCurrentUsername);
-      if (!contributor) return;
+      // Get period-filtered contributor data (matches what the modal shows)
+      const periodMRs = getDetailPeriodMRs(detailGranularity, detailPeriodOffset);
+      const periodContributors = buildContributors(periodMRs);
+      const contributor = periodContributors.find((c) => c.username === detailCurrentUsername);
 
-      // Calculate metrics for the contributor
+      // Also get all-time data for badges and header name/avatar
+      const allMRsFiltered = getFilteredMRs();
+      const allContributors = buildContributors(allMRsFiltered);
+      const allTimeContributor = allContributors.find((c) => c.username === detailCurrentUsername);
+      if (!allTimeContributor) return;
+
+      // Use period contributor for metrics/repos, fall back if no activity in period
+      const periodC = contributor || { username: detailCurrentUsername, name: allTimeContributor.name, authored_mrs: [], comments: 0, commentsOnOwn: 0, approvals: 0 };
+
+      // Calculate metrics for the period contributor
       for (const metric of METRICS) {
-        contributor[`metric_${metric.id}`] = metric.compute(contributor);
+        periodC[`metric_${metric.id}`] = metric.compute(periodC);
       }
 
-      // Compute badges
-      computeBadges(contributors);
-      const badges = contributor.badges || [];
+      // Compute badges from all-time data
+      computeBadges(allContributors);
+      const badges = allTimeContributor.badges || [];
+
+      // Period label
+      const pdfPeriodLabel = getDetailPeriodLabel(detailGranularity, detailPeriodOffset);
 
       // Title
       doc.setFontSize(18);
@@ -1247,15 +1258,15 @@
       // Contributor name and username
       doc.setFontSize(14);
       doc.setFont("helvetica", "bold");
-      doc.text(`${contributor.name} (@${contributor.username})`, 14, y);
+      doc.text(`${allTimeContributor.name} (@${allTimeContributor.username})`, 14, y);
       y += 6;
 
-      // Badges
+      // Badges — plain text, comma-separated, no icons
       if (badges.length > 0) {
         doc.setFontSize(9);
         doc.setFont("helvetica", "normal");
         doc.setTextColor(80);
-        doc.text("Badges: " + badges.map((b) => `${b.icon} ${b.label}`).join("  |  "), 14, y);
+        doc.text("Badges: " + badges.map((b) => b.label).join(", "), 14, y);
         doc.setTextColor(0);
         y += 5;
       }
@@ -1266,7 +1277,7 @@
       doc.setTextColor(100);
       const repoLabel = filterRepo.value || "All Repositories";
       const genDate = generatedAt ? new Date(generatedAt).toLocaleString() : "N/A";
-      doc.text(`Repository: ${repoLabel}  |  Data from: ${genDate}`, 14, y);
+      doc.text(`Repository: ${repoLabel}  |  Period: ${pdfPeriodLabel}  |  Data from: ${genDate}`, 14, y);
       doc.setTextColor(0);
       y += 6;
 
@@ -1284,7 +1295,7 @@
       // Create metrics table
       const metricsData = METRICS.map(metric => [
         metric.label,
-        contributor[`metric_${metric.id}`].toLocaleString()
+        periodC[`metric_${metric.id}`].toLocaleString()
       ]);
 
       doc.autoTable({
@@ -1314,7 +1325,7 @@
       y += 6;
 
       const repoMap = new Map();
-      for (const mr of contributor.authored_mrs) {
+      for (const mr of periodC.authored_mrs) {
         if (!repoMap.has(mr.repoName)) {
           repoMap.set(mr.repoName, { count: 0, merged: 0, adds: 0, dels: 0 });
         }
@@ -1355,7 +1366,7 @@
         y = doc.lastAutoTable.finalY + 8;
       }
 
-      // Recent merge requests
+      // Recent merge requests (from the period)
       if (y > pageH - 40) {
         doc.addPage();
         y = 15;
@@ -1363,10 +1374,10 @@
 
       doc.setFontSize(12);
       doc.setFont("helvetica", "bold");
-      doc.text("Recent Merge Requests", 14, y);
+      doc.text("Merge Requests", 14, y);
       y += 6;
 
-      const recentMRs = [...contributor.authored_mrs]
+      const recentMRs = [...periodC.authored_mrs]
         .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
         .slice(0, 15);
 
@@ -1410,7 +1421,7 @@
       doc.setTextColor(150);
       doc.text(`Generated on ${new Date().toLocaleString()} — GitLab Contributions Tracker`, 14, y);
 
-      const filename = `contributor-${contributor.username}-${new Date().toISOString().slice(0, 10)}.pdf`;
+      const filename = `contributor-${allTimeContributor.username}-${new Date().toISOString().slice(0, 10)}.pdf`;
       doc.save(filename);
     } catch (error) {
       console.error("Error generating PDF:", error);
