@@ -45,5 +45,10 @@
     "enabled": true,
     "percentile": 0.1,
     "threshold": 3
+  },
+  "speed_demon": {
+    "enabled": true,
+    "percentile": 0.1,
+    "threshold": 3
   }
 }
