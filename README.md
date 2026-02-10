@@ -23,11 +23,15 @@ It ranks contributors using a configurable scoring system based on MRs authored,
 
 ### Fetching Data
 
-<a href="https://asciinema.org/a/tKBlKcDrEo0XHIWp"><img src="https://asciinema.org/a/tKBlKcDrEo0XHIWp.svg" alt="asciicast" width="500"></a>
+<a href="https://asciinema.org/a/CxaKkJVrwyEZ3YBH"><img src="https://asciinema.org/a/CxaKkJVrwyEZ3YBH.svg" alt="asciicast" width="500"></a>
 
 ### Dashboard Screenshot
 
-![Dashboard Screenshot](./demo-screenshot.png)
+![Dashboard Screenshot](./demo-screenshot1.png)
+
+### Individual View ScreenShot
+
+![Individual View Screenshot](./demo-screenshot2.png)
 
 ## Quick Start
 
