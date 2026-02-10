@@ -1,3 +1,4 @@
+# Repositories are organized by team.
 # Each entry can be a URL string or an object with options.
 # skip_scoring: list of scoring categories to exclude for this repo.
 # Valid values: lines, comments, approvals
@@ -18,10 +19,13 @@ bot_accounts:
   # Add more bot accounts as needed
 
 repositories:
-  - url: https://gitlab.com/gitlab-org/gitlab
-  - url: https://gitlab.com/gitlab-org/gitlab-runner
-  - url: https://gitlab.com/gitlab-org/gitlab-docs
-    skip_scoring:
-      - lines
-  - url: https://gitlab.com/fdroid/fdroidclient
-  - url: https://gitlab.com/postmarketos/pmaports
+  gitlab-core:
+    - url: https://gitlab.com/gitlab-org/gitlab
+    - url: https://gitlab.com/gitlab-org/gitlab-docs
+      skip_scoring:
+        - lines
+  gitlab-runner:
+    - url: https://gitlab.com/gitlab-org/gitlab-runner
+  mobile:
+    - url: https://gitlab.com/fdroid/fdroidclient
+    - url: https://gitlab.com/postmarketos/pmaports

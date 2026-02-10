@@ -92,7 +92,8 @@
     <h2>What is this?</h2>
     <p>
       A lightweight dashboard that tracks merge request contributions across
-      one or more private GitLab repositories. It ranks contributors using a
+      one or more private GitLab repositories. Repositories can be organized
+      by teams for filtered analysis. It ranks contributors using a
       configurable scoring system based on MRs authored, comments, approvals,
       lines of code, Jira bug priority, and AI co-authorship.
     </p>
@@ -127,12 +128,20 @@
     </p>
 
     <h2>Repository configuration</h2>
-    <p>Repositories are listed in <code>repos.yaml</code> at the project root.</p>
+    <p>Repositories are organized by team in <code>repos.yaml</code> at the project root.</p>
     <pre>repositories:
-  - url: https://gitlab.com/org/project-a
-  - url: https://gitlab.com/org/docs-repo
-    skip_scoring:
-      - lines        # exclude LOC from scoring for this repo</pre>
+  backend-team:
+    - url: https://gitlab.com/org/api-service
+    - url: https://gitlab.com/org/user-service
+  frontend-team:
+    - url: https://gitlab.com/org/web-app
+  docs-team:
+    - url: https://gitlab.com/org/documentation
+      skip_scoring:
+        - lines      # exclude LOC from scoring for this repo</pre>
+    <p>
+      The team-based format allows filtering contributors by team in the UI.
+    </p>
     <p>
       <code>skip_scoring</code> accepts any combination of:
     </p>
@@ -142,6 +151,17 @@
       <tr><td><code>comments</code></td><td>Excludes comments from scoring</td></tr>
       <tr><td><code>approvals</code></td><td>Excludes approvals from scoring</td></tr>
     </table>
+
+    <h2>Team filtering</h2>
+    <p>
+      When repositories are organized by team, a team dropdown filter appears
+      in the dashboard. Selecting a team filters both the repository list and
+      contributor rankings to show only activity from that team's repositories.
+    </p>
+    <p>
+      The "Show All Teams" option can be enabled in Settings to add an
+      "All Teams" option to the dropdown, allowing you to view cross-team activity.
+    </p>
 
     <h2>Scoring system</h2>
     <p>

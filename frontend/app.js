@@ -18,6 +18,8 @@
   let SCORE = { ...SCORE_DEFAULTS };
 
   const SCORE_STORAGE_KEY = "score-config-overrides";
+  const SHOW_ALL_TEAMS_KEY = "show-all-teams";
+  let showAllTeams = localStorage.getItem(SHOW_ALL_TEAMS_KEY) === "true";
 
   async function loadScoreConfig() {
     try {
@@ -392,6 +394,7 @@
   // --- State ---
   let allMRs = [];
   let repositories = [];
+  let teams = [];
   let generatedAt = "";
 
   // --- DOM refs ---
@@ -401,6 +404,7 @@
   const appEl = $("#app");
   const leaderboardBody = $("#leaderboard-body");
   const leaderboardPeriod = $("#leaderboard-period");
+  const filterTeam = $("#filter-team");
   const filterRepo = $("#filter-repo");
   const metricSelect = $("#metric-select");
   const generatedAtEl = $("#generated-at");
@@ -478,16 +482,19 @@
       const data = await resp.json();
 
       repositories = data.repositories || [];
+      teams = data.teams || [];
       generatedAt = data.generated_at || "";
 
       allMRs = [];
       for (const repo of repositories) {
         const skip = new Set(repo.skip_scoring || []);
+        const repoTeams = repo.teams || [];
         for (const mr of repo.merge_requests) {
           allMRs.push({
             ...mr,
             repoName: repo.name,
             repoPath: repo.full_path,
+            repoTeams,
             skipScoring: skip,
           });
         }
@@ -496,6 +503,7 @@
       loadingEl.hidden = true;
       appEl.hidden = false;
 
+      populateTeams();
       populateFilters();
       render();
     } catch (err) {
@@ -512,28 +520,91 @@
     return parts.slice(-2).join("/");
   }
 
+  function populateTeams() {
+    const currentTeam = filterTeam.value;
+    filterTeam.innerHTML = "";
+
+    if (showAllTeams) {
+      const allOpt = document.createElement("option");
+      allOpt.value = "";
+      allOpt.textContent = "All Teams";
+      filterTeam.appendChild(allOpt);
+    }
+
+    for (const team of teams) {
+      const opt = document.createElement("option");
+      opt.value = team;
+      opt.textContent = team;
+      filterTeam.appendChild(opt);
+    }
+
+    // Restore previous selection if still valid, otherwise pick first option
+    if (currentTeam && teams.includes(currentTeam)) {
+      filterTeam.value = currentTeam;
+    } else if (!showAllTeams && teams.length > 0) {
+      filterTeam.value = teams[0];
+    }
+  }
+
   function populateFilters() {
-    const paths = [...new Set(repositories.map((r) => r.full_path))];
-    // Create pairs of (path, displayLabel) and sort by display label
+    const selectedTeam = filterTeam.value;
+
+    // Filter repos by team if one is selected
+    let filteredRepos = repositories;
+    if (selectedTeam) {
+      filteredRepos = repositories.filter((r) => {
+        const rTeams = r.teams || [];
+        return rTeams.includes(selectedTeam);
+      });
+    }
+
+    const paths = [...new Set(filteredRepos.map((r) => r.full_path))];
     const pathsWithLabels = paths.map(path => ({
       path,
       label: repoDisplayLabel(path)
     })).sort((a, b) => a.label.localeCompare(b.label));
 
+    // Preserve current selection if still valid
+    const currentRepo = filterRepo.value;
+    filterRepo.length = 1; // keep "All Repositories"
     for (const { path, label } of pathsWithLabels) {
       const opt = document.createElement("option");
       opt.value = path;
       opt.textContent = label;
       filterRepo.appendChild(opt);
     }
+    // Restore selection if it's still in the filtered list
+    if (paths.includes(currentRepo)) {
+      filterRepo.value = currentRepo;
+    }
   }
 
   function getFilteredMRs() {
+    let mrs = allMRs;
+
+    // Filter by team first
+    const selectedTeam = filterTeam.value;
+    if (selectedTeam) {
+      mrs = mrs.filter((mr) => {
+        const t = mr.repoTeams || [];
+        return t.includes(selectedTeam);
+      });
+    }
+
+    // Then filter by repo
     const repo = filterRepo.value;
-    if (!repo) return allMRs;
-    return allMRs.filter((mr) => mr.repoPath === repo);
+    if (repo) {
+      mrs = mrs.filter((mr) => mr.repoPath === repo);
+    }
+
+    return mrs;
   }
 
+  filterTeam.addEventListener("change", () => {
+    filterRepo.value = ""; // reset repo selection when team changes
+    populateFilters();
+    render();
+  });
   filterRepo.addEventListener("change", render);
   metricSelect.addEventListener("change", render);
 
@@ -1481,6 +1552,19 @@
   function openSettings() {
     settingsBody.innerHTML = "";
 
+    // General settings section
+    const generalHeader = document.createElement("h3");
+    generalHeader.textContent = "General";
+    generalHeader.style.cssText = "margin: 0 0 0.75rem; color: var(--accent); font-size: 0.9rem; font-weight: 700;";
+    settingsBody.appendChild(generalHeader);
+
+    const allTeamsRow = document.createElement("div");
+    allTeamsRow.className = "setting-row";
+    allTeamsRow.innerHTML =
+      `<label class="setting-label" for="setting-show-all-teams">Show "All Teams" filter</label>` +
+      `<input class="setting-checkbox" id="setting-show-all-teams" type="checkbox" ${showAllTeams ? 'checked' : ''}>`;
+    settingsBody.appendChild(allTeamsRow);
+
     // Score settings section
     const scoreHeader = document.createElement("h3");
     scoreHeader.textContent = "Scoring Weights";
@@ -1557,6 +1641,13 @@
   }
 
   function saveSettings() {
+    // Save general settings
+    const allTeamsCheckbox = settingsBody.querySelector("#setting-show-all-teams");
+    showAllTeams = allTeamsCheckbox ? allTeamsCheckbox.checked : false;
+    localStorage.setItem(SHOW_ALL_TEAMS_KEY, String(showAllTeams));
+    populateTeams();
+    populateFilters();
+
     // Save score settings
     const scoreInputs = settingsBody.querySelectorAll(".setting-input[data-key]");
     const scoreOverrides = {};
@@ -1590,8 +1681,12 @@
   function resetSettings() {
     localStorage.removeItem(SCORE_STORAGE_KEY);
     localStorage.removeItem(BADGE_STORAGE_KEY);
+    localStorage.removeItem(SHOW_ALL_TEAMS_KEY);
     SCORE = { ...SCORE_FILE };
     BADGE = { ...BADGE_FILE };
+    showAllTeams = false;
+    populateTeams();
+    populateFilters();
     closeSettings();
     render();
   }

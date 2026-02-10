@@ -32,6 +32,10 @@
       <!-- Controls -->
       <section class="controls">
         <div class="filter-group">
+          <label for="filter-team">Team</label>
+          <select id="filter-team"></select>
+        </div>
+        <div class="filter-group">
           <label for="filter-repo">Repository</label>
           <select id="filter-repo">
             <option value="">All Repositories</option>
@@ -94,7 +98,7 @@
   <div id="settings-overlay" class="modal-overlay" hidden>
     <div class="modal">
       <div class="modal-header">
-        <h2 class="modal-title">Score Settings</h2>
+        <h2 class="modal-title">Settings</h2>
         <button id="settings-close" class="modal-close" aria-label="Close">&times;</button>
       </div>
       <div class="modal-body" id="settings-body"></div>

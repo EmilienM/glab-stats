@@ -8,6 +8,7 @@ It ranks contributors using a configurable scoring system based on MRs authored,
 ## Features
 
 - **Multi-repository tracking** — Configure multiple GitLab repositories in YAML
+- **Team-based organization** — Group repositories by teams and filter contributors by team
 - **Configurable scoring** — Customizable weights for different contribution types
 - **Achievement badges** — Visual badges for standout contributors (Merge Machine, Review Guru, AI Jedi, etc.)
 - **AI co-authorship tracking** — Detects AI-assisted MRs via description trailers (Co-Authored-By, Generated-By, etc.) and rewards collaboration with AI tools
@@ -43,12 +44,17 @@ It ranks contributors using a configurable scoring system based on MRs authored,
 
 3. **Configure repositories**
 
-   Edit `repos.yaml`:
+   Edit `repos.yaml` to organize repositories by team:
    ```yaml
    repositories:
-     - url: https://gitlab.com/your-org/repo1
-     - url: https://gitlab.com/your-org/repo2
-       skip_scoring: [lines]  # Exclude LOC for docs repos
+     backend-team:
+       - url: https://gitlab.com/your-org/api-service
+       - url: https://gitlab.com/your-org/user-service
+     frontend-team:
+       - url: https://gitlab.com/your-org/web-app
+     docs-team:
+       - url: https://gitlab.com/your-org/documentation
+         skip_scoring: [lines]  # Exclude LOC for docs repos
    ```
 
 4. **Fetch data**
@@ -78,6 +84,7 @@ It ranks contributors using a configurable scoring system based on MRs authored,
 
 - **Scoring weights** — Edit `frontend/score-config.json` or use the Settings modal in the UI
 - **Badge criteria** — Edit `frontend/badge-config.json` or use the Settings modal to configure thresholds and percentiles
+- **Team filtering** — Use the team dropdown to filter contributors and repositories by team
 - **Repository filtering** — Add `skip_scoring: [lines, comments, approvals]` to exclude categories per repo
 - **Jira integration** — Extracts ticket IDs from MR titles (e.g., `RHEL-1234: fix bug`)
 

@@ -160,20 +160,37 @@ def load_config(config_path=None):
         config_path = DEFAULT_CONFIG_PATH
     with open(config_path, encoding="utf-8") as f:
         config = yaml.safe_load(f)
-    raw = config.get("repositories", [])
-    repos = []
-    for entry in raw:
-        if isinstance(entry, str):
-            repos.append({"url": entry, "skip_scoring": []})
-        else:
-            repos.append(
-                {
-                    "url": entry["url"],
-                    "skip_scoring": entry.get("skip_scoring", []),
+    raw = config.get("repositories", {})
+
+    # Team-based dict format: { team_name: [repo_entries...], ... }
+    repo_by_url: dict[str, dict] = {}
+    for team_name, entries in raw.items():
+        for entry in entries or []:
+            if isinstance(entry, str):
+                url = entry
+                skip = []
+            else:
+                url = entry["url"]
+                skip = entry.get("skip_scoring", [])
+
+            if url in repo_by_url:
+                # Merge: union skip_scoring, append team
+                existing = repo_by_url[url]
+                existing["skip_scoring"] = list(set(existing["skip_scoring"]) | set(skip))
+                if team_name not in existing["teams"]:
+                    existing["teams"].append(team_name)
+            else:
+                repo_by_url[url] = {
+                    "url": url,
+                    "skip_scoring": skip,
+                    "teams": [team_name],
                 }
-            )
+
+    repos = list(repo_by_url.values())
+    # All team names, sorted for deterministic output
+    teams = sorted(raw.keys())
     bot_accounts = set(config.get("bot_accounts", []))
-    return repos, bot_accounts
+    return repos, bot_accounts, teams
 
 
 def extract_project_path(url):
@@ -412,7 +429,7 @@ def main():
         print("Error: GITLAB_TOKEN environment variable is not set.", file=sys.stderr)
         sys.exit(1)
 
-    repos, bot_accounts = load_config(args.repos)
+    repos, bot_accounts, teams = load_config(args.repos)
     if not repos:
         config_file = args.repos or DEFAULT_CONFIG_PATH
         print(f"Error: No repositories found in {config_file}.", file=sys.stderr)
@@ -435,6 +452,7 @@ def main():
 
     result = {
         "generated_at": datetime.now(UTC).isoformat(),
+        "teams": teams,
         "repositories": [],
     }
 
@@ -474,6 +492,7 @@ def main():
                 "full_path": project_path,
                 "web_url": repo_url,
                 "skip_scoring": skip_scoring,
+                "teams": repo_cfg.get("teams", []),
                 "merge_requests": mrs,
             }
         )
