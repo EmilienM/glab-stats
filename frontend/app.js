@@ -878,6 +878,47 @@
     return mrs.filter((mr) => getBucketKey(mr.created_at, gran) === periodKey);
   }
 
+  /**
+   * Compute the start/end date-key boundaries for a given granularity + periodKey.
+   * Returns {start, end} where both are YYYY-MM-DD strings, or null if no filter.
+   */
+  function periodBounds(gran, periodKey) {
+    if (!periodKey) return null;
+    if (gran === "custom" && periodKey === "custom") {
+      if (!customRangeStart || !customRangeEnd) return null;
+      return { start: customRangeStart, end: customRangeEnd };
+    }
+    if (gran === "day") {
+      return { start: periodKey, end: periodKey };
+    }
+    if (gran === "week") {
+      // periodKey is the Monday date
+      const mon = new Date(periodKey + "T00:00:00Z");
+      const sun = new Date(mon.getTime());
+      sun.setUTCDate(sun.getUTCDate() + 6);
+      return { start: periodKey, end: toKey(sun) };
+    }
+    if (gran === "month") {
+      // periodKey is "YYYY-MM"
+      const [y, m] = periodKey.split("-").map(Number);
+      const first = new Date(Date.UTC(y, m - 1, 1));
+      const last = new Date(Date.UTC(y, m, 0)); // day 0 of next month = last day of this month
+      return { start: toKey(first), end: toKey(last) };
+    }
+    // year
+    return { start: `${periodKey}-01-01`, end: `${periodKey}-12-31` };
+  }
+
+  /**
+   * Check whether an ISO timestamp falls within a date range.
+   * bounds is {start, end} with YYYY-MM-DD strings, or null (no filter).
+   */
+  function isDateInBounds(iso, bounds) {
+    if (!bounds || !iso) return true;
+    const d = toKey(utcDate(iso));
+    return d >= bounds.start && d <= bounds.end;
+  }
+
   function formatCustomRangeLabel(startStr, endStr) {
     const s = new Date(startStr + "T00:00:00Z");
     const e = new Date(endStr + "T00:00:00Z");
@@ -914,40 +955,55 @@
         comments: 0,
         commentsOnOwn: 0,
         approvals: 0,
+        comment_dates: [],
+        approval_dates: [],
       });
     }
     return map.get(user.username);
   }
 
-  function buildContributors(mrs) {
+  /**
+   * Build contributor objects from a list of MRs.
+   * @param {Array} mrs - all MRs (team/repo filtered, but NOT period-filtered)
+   * @param {Object|null} bounds - optional {start, end} date range (YYYY-MM-DD)
+   *   to filter MR authorship by created_at, comments by their created_at,
+   *   and approvals by their approved_at. When null, everything is counted.
+   */
+  function buildContributors(mrs, bounds) {
     const map = new Map();
 
     for (const mr of mrs) {
       const skip = mr.skipScoring || new Set();
 
-      // MR author — if lines are skipped for this repo, zero out line stats
-      const mrForAuthor = skip.has("lines")
-        ? { ...mr, additions: 0, deletions: 0 }
-        : mr;
-      const author = ensureContributor(map, mr.author);
-      author.authored_mrs.push(mrForAuthor);
+      // MR author — only attribute authorship if MR was created in the period
+      if (isDateInBounds(mr.created_at, bounds)) {
+        const mrForAuthor = skip.has("lines")
+          ? { ...mr, additions: 0, deletions: 0 }
+          : mr;
+        const author = ensureContributor(map, mr.author);
+        author.authored_mrs.push(mrForAuthor);
+      }
 
-      // Commenters (skip if this repo excludes comment scoring)
+      // Commenters — filter by each comment's own timestamp
       if (!skip.has("comments")) {
         for (const c of (mr.commenters || [])) {
+          if (!isDateInBounds(c.created_at, bounds)) continue;
           const contributor = ensureContributor(map, c);
-          contributor.comments += c.count;
+          contributor.comments += 1;
+          contributor.comment_dates.push(c.created_at);
           if (c.username === mr.author.username) {
-            contributor.commentsOnOwn += c.count;
+            contributor.commentsOnOwn += 1;
           }
         }
       }
 
-      // Approvers (skip if this repo excludes approval scoring)
+      // Approvers — filter by each approval's own timestamp
       if (!skip.has("approvals")) {
         for (const a of (mr.approvers || [])) {
+          if (!isDateInBounds(a.approved_at, bounds)) continue;
           const contributor = ensureContributor(map, a);
           contributor.approvals += 1;
+          contributor.approval_dates.push(a.approved_at);
         }
       }
     }
@@ -961,7 +1017,8 @@
     const activePeriod = selectedPeriodKey || currentPeriodKey(currentGranularity);
     const periodMRs = filterMRsToPeriod(allFiltered, currentGranularity, activePeriod);
     const metric = METRICS.find((m) => m.id === metricSelect.value) || METRICS[0];
-    const contributors = buildContributors(periodMRs);
+    const activeBounds = periodBounds(currentGranularity, activePeriod);
+    const contributors = buildContributors(allFiltered, activeBounds);
 
     // Compute metric and breakdown for each contributor
     for (const c of contributors) {
@@ -1378,9 +1435,8 @@
 
       // Build table data from current leaderboard
       const allFiltered = getFilteredMRs();
-      const periodMRs = filterMRsToPeriod(allFiltered, currentGranularity, activePeriod);
       const metric = METRICS.find((m) => m.id === metricSelect.value) || METRICS[0];
-      const contributors = buildContributors(periodMRs);
+      const contributors = buildContributors(allFiltered, periodBounds(currentGranularity, activePeriod));
       for (const c of contributors) {
         c.score = metric.compute(c);
         c.breakdownBadges = metric.breakdown(c);
@@ -1447,12 +1503,11 @@
       let y = 15;
 
       // Get period-filtered contributor data (matches what the modal shows)
-      const periodMRs = getDetailPeriodMRs(detailGranularity, detailPeriodOffset);
-      const periodContributors = buildContributors(periodMRs);
+      const allMRsFiltered = getFilteredMRs();
+      const periodContributors = buildContributors(allMRsFiltered, getDetailPeriodBounds(detailGranularity, detailPeriodOffset));
       const contributor = periodContributors.find((c) => c.username === detailCurrentUsername);
 
       // Also get all-time data for badges and header name/avatar
-      const allMRsFiltered = getFilteredMRs();
       const allContributors = buildContributors(allMRsFiltered);
       const allTimeContributor = allContributors.find((c) => c.username === detailCurrentUsername);
       if (!allTimeContributor) return;
@@ -1898,20 +1953,20 @@
         }
       }
 
-      // Comments
+      // Comments (each entry is a single comment)
       if (isAuthor) {
         // Others who commented on this user's MR → comments received
         for (const c of (mr.commenters || [])) {
           if (c.username === username) continue;
           const entry = ensureCollab(c.username, c.name, c.avatar_url);
-          if (entry) entry.comments_received += c.count;
+          if (entry) entry.comments_received += 1;
         }
       } else {
         // This user commented on someone else's MR → comments given to that author
         for (const c of (mr.commenters || [])) {
           if (c.username === username) {
             const entry = ensureCollab(mr.author.username, mr.author.name, mr.author.avatar_url);
-            if (entry) entry.comments_given += c.count;
+            if (entry) entry.comments_given += 1;
           }
         }
       }
@@ -1994,6 +2049,32 @@
     });
   }
 
+  function getDetailPeriodBounds(period, offset = 0) {
+    if (period === "all") return null;
+    if (period === "custom") {
+      if (!detailCustomRangeStart || !detailCustomRangeEnd) return null;
+      return { start: detailCustomRangeStart, end: detailCustomRangeEnd };
+    }
+    const now = new Date();
+    const nowUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    let startDate, endDate;
+    if (period === "week") {
+      startDate = mondayOf(nowUTC);
+      startDate = new Date(startDate);
+      startDate.setUTCDate(startDate.getUTCDate() + (offset * 7));
+      endDate = new Date(startDate);
+      endDate.setUTCDate(endDate.getUTCDate() + 6);
+    } else if (period === "month") {
+      startDate = new Date(Date.UTC(nowUTC.getUTCFullYear(), nowUTC.getUTCMonth() + offset, 1));
+      endDate = new Date(Date.UTC(nowUTC.getUTCFullYear(), nowUTC.getUTCMonth() + offset + 1, 0));
+    } else if (period === "year") {
+      const targetYear = nowUTC.getUTCFullYear() + offset;
+      startDate = new Date(Date.UTC(targetYear, 0, 1));
+      endDate = new Date(Date.UTC(targetYear, 11, 31));
+    }
+    return { start: toKey(startDate), end: toKey(endDate) };
+  }
+
   function getDetailPeriodLabel(period, offset = 0) {
     if (period === "custom") {
       if (detailCustomRangeStart && detailCustomRangeEnd) {
@@ -2039,7 +2120,8 @@
 
   function renderDetailPeriodSections(username, period, offset = 0) {
     const periodMRs = getDetailPeriodMRs(period, offset);
-    const periodContributors = buildContributors(periodMRs);
+    const allMRs = getFilteredMRs();
+    const periodContributors = buildContributors(allMRs, getDetailPeriodBounds(period, offset));
     const contributor = periodContributors.find((c) => c.username === username);
 
     if (contributor) {
@@ -2252,13 +2334,19 @@
 
       if (!skip.has("comments")) {
         for (const c of (mr.commenters || [])) {
-          if (c.username === username) ensure(key).comments += c.count;
+          if (c.username !== username) continue;
+          const cKey = c.created_at ? getBucketKey(c.created_at, gran) : key;
+          if (cKey < startKey || cKey > endKey) continue;
+          ensure(cKey).comments += 1;
         }
       }
 
       if (!skip.has("approvals")) {
         for (const a of (mr.approvers || [])) {
-          if (a.username === username) ensure(key).approvals++;
+          if (a.username !== username) continue;
+          const aKey = a.approved_at ? getBucketKey(a.approved_at, gran) : key;
+          if (aKey < startKey || aKey > endKey) continue;
+          ensure(aKey).approvals++;
         }
       }
     }

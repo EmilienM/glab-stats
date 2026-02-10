@@ -294,11 +294,11 @@ def fetch_mr_diff_stats(session, project_path, mr_iid):
 
 
 def fetch_mr_comments(session, project_path, mr_iid, bot_accounts):
-    """Fetch user comments for a merge request, return per-author counts."""
+    """Fetch user comments for a merge request, return individual entries with timestamps."""
     encoded_path = quote(project_path, safe="")
     url = f"{GITLAB_API_BASE}/projects/{encoded_path}/merge_requests/{mr_iid}/notes"
     params = {"per_page": 100, "page": 1}
-    author_counts = {}
+    comments: list[dict[str, str]] = []
 
     while True:
         resp = _checked_get(session, url, params=params)
@@ -316,21 +316,21 @@ def fetch_mr_comments(session, project_path, mr_iid, bot_accounts):
             if is_bot_account(username, bot_accounts):
                 continue
 
-            if username not in author_counts:
-                author_counts[username] = {
+            comments.append(
+                {
                     "username": username,
                     "name": author.get("name", "Unknown"),
                     "avatar_url": author.get("avatar_url", ""),
-                    "count": 0,
+                    "created_at": note.get("created_at", ""),
                 }
-            author_counts[username]["count"] += 1
+            )
 
         next_page = resp.headers.get("x-next-page")
         if not next_page:
             break
         params["page"] = int(next_page)
 
-    return list(author_counts.values())
+    return comments
 
 
 def fetch_mr_approvals(session, project_path, mr_iid, bot_accounts):
@@ -354,6 +354,7 @@ def fetch_mr_approvals(session, project_path, mr_iid, bot_accounts):
                 "username": username,
                 "name": user.get("name", "Unknown"),
                 "avatar_url": user.get("avatar_url", ""),
+                "approved_at": entry.get("approved_at", ""),
             }
         )
 
