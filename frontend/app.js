@@ -13,6 +13,8 @@
     line_added: 0.05, line_deleted: 0.02,
     priority_critical: 15, priority_major: 8, priority_normal: 3, priority_minor: 1, priority_undefined: 0,
     ai_coauthor: 5,
+    merge_sameday: 3,
+    merge_within_week: 2,
   };
   let SCORE_FILE = { ...SCORE_DEFAULTS };
   let SCORE = { ...SCORE_DEFAULTS };
@@ -55,6 +57,7 @@
     team_player: { enabled: true, threshold: 5, ratio: 2 },
     globe_trotter: { enabled: true, threshold: 3 },
     ai_jedi: { enabled: true, percentile: 0.1, threshold: 3 },
+    speed_demon: { enabled: true, percentile: 0.1, threshold: 3 },
   };
   let BADGE_FILE = { ...BADGE_DEFAULTS };
   let BADGE = { ...BADGE_DEFAULTS };
@@ -113,6 +116,14 @@
     const dels = c.authored_mrs.reduce((s, mr) => s + (mr.deletions || 0), 0);
     const prioPoints = computePriorityPoints(c.authored_mrs);
     const aiCount = c.authored_mrs.filter((mr) => mr.ai_coauthored).length;
+    const sameDayCount = c.authored_mrs.filter((mr) =>
+      mr.state === "merged" && mr.merged_at
+      && (new Date(mr.merged_at) - new Date(mr.created_at)) / 86400000 < 1).length;
+    const withinWeekCount = c.authored_mrs.filter((mr) => {
+      if (mr.state !== "merged" || !mr.merged_at) return false;
+      const d = (new Date(mr.merged_at) - new Date(mr.created_at)) / 86400000;
+      return d >= 1 && d < 7;
+    }).length;
     return Math.round(
       (nonMerged * SCORE.mr_open)
       + (merged * SCORE.mr_merged)
@@ -122,6 +133,8 @@
       + (dels * SCORE.line_deleted)
       + prioPoints
       + (aiCount * SCORE.ai_coauthor)
+      + (sameDayCount * SCORE.merge_sameday)
+      + (withinWeekCount * SCORE.merge_within_week)
     );
   }
 
@@ -142,12 +155,22 @@
         const linePts = Math.round((adds * SCORE.line_added) + (dels * SCORE.line_deleted));
         const prioPts = computePriorityPoints(c.authored_mrs);
         const aiPts = c.authored_mrs.filter((mr) => mr.ai_coauthored).length * SCORE.ai_coauthor;
+        const sdCount = c.authored_mrs.filter((mr) =>
+          mr.state === "merged" && mr.merged_at
+          && (new Date(mr.merged_at) - new Date(mr.created_at)) / 86400000 < 1).length;
+        const wwCount = c.authored_mrs.filter((mr) => {
+          if (mr.state !== "merged" || !mr.merged_at) return false;
+          const d = (new Date(mr.merged_at) - new Date(mr.created_at)) / 86400000;
+          return d >= 1 && d < 7;
+        }).length;
+        const ctPts = (sdCount * SCORE.merge_sameday) + (wwCount * SCORE.merge_within_week);
         if (mrPts) p.push({ label: `${mrPts} MRs`, css: "mini-badge-merged" });
         if (linePts) p.push({ label: `${linePts} lines`, css: "mini-badge-opened" });
         if (commentPts) p.push({ label: `${commentPts} comments`, css: "mini-badge-opened" });
         if (approvalPts) p.push({ label: `${approvalPts} approvals`, css: "mini-badge-closed" });
         if (prioPts) p.push({ label: `${prioPts} priority`, css: "mini-badge-merged" });
         if (aiPts) p.push({ label: `${aiPts} AI`, css: "mini-badge-merged" });
+        if (ctPts) p.push({ label: `${ctPts} speed`, css: "mini-badge-merged" });
         return p;
       },
     },
@@ -269,6 +292,35 @@
         return ai ? [{ label: `${ai} of ${total} MRs`, css: "mini-badge-merged" }] : [];
       },
     },
+    {
+      id: "completion_time",
+      label: "Completion Time",
+      compute: (c) => {
+        const merged = c.authored_mrs.filter((mr) => mr.state === "merged" && mr.merged_at);
+        if (!merged.length) return 0;
+        const totalDays = merged.reduce((s, mr) =>
+          s + (new Date(mr.merged_at) - new Date(mr.created_at)) / 86400000, 0);
+        const avg = totalDays / merged.length;
+        return Math.max(0, Math.round((1 / (avg + 1)) * 1000));
+      },
+      breakdown: (c) => {
+        const merged = c.authored_mrs.filter((mr) => mr.state === "merged" && mr.merged_at);
+        if (!merged.length) return [{ label: "No merged MRs", css: "mini-badge-closed" }];
+        const totalDays = merged.reduce((s, mr) =>
+          s + (new Date(mr.merged_at) - new Date(mr.created_at)) / 86400000, 0);
+        const avg = totalDays / merged.length;
+        const sameDay = merged.filter((mr) =>
+          (new Date(mr.merged_at) - new Date(mr.created_at)) / 86400000 < 1).length;
+        const withinWeek = merged.filter((mr) => {
+          const d = (new Date(mr.merged_at) - new Date(mr.created_at)) / 86400000;
+          return d >= 1 && d < 7;
+        }).length;
+        const p = [];
+        if (sameDay) p.push({ label: `${sameDay} same-day`, css: "mini-badge-merged" });
+        if (withinWeek) p.push({ label: `${withinWeek} within week`, css: "mini-badge-opened" });
+        return p;
+      },
+    },
   ];
 
   // --- Achievement Badges ---
@@ -381,6 +433,24 @@
         if (!config.enabled) return false;
         const val = c.authored_mrs.filter((mr) => mr.ai_coauthored).length;
         return val >= config.threshold && val >= topPercentileThreshold(all, (x) => x.authored_mrs.filter((mr) => mr.ai_coauthored).length, config.percentile);
+      },
+    },
+    {
+      id: "speed_demon", label: "Speed Demon", icon: "\uD83C\uDFCE\uFE0F", css: "badge-gold",
+      title: "Top performers by average merge speed",
+      qualify(c, all) {
+        const config = BADGE.speed_demon;
+        if (!config.enabled) return false;
+        const merged = c.authored_mrs.filter((mr) => mr.state === "merged" && mr.merged_at);
+        if (merged.length < config.threshold) return false;
+        const avgDays = merged.reduce((s, mr) =>
+          s + (new Date(mr.merged_at) - new Date(mr.created_at)) / 86400000, 0) / merged.length;
+        const speed = 1 / (avgDays + 1);
+        return speed >= topPercentileThreshold(all, (x) => {
+          const m = x.authored_mrs.filter((mr) => mr.state === "merged" && mr.merged_at);
+          if (m.length < config.threshold) return 0;
+          return 1 / (m.reduce((s, mr) => s + (new Date(mr.merged_at) - new Date(mr.created_at)) / 86400000, 0) / m.length + 1);
+        }, config.percentile);
       },
     },
   ];
@@ -1395,9 +1465,9 @@
         periodC[`metric_${metric.id}`] = metric.compute(periodC);
       }
 
-      // Compute badges from all-time data
-      computeBadges(allContributors);
-      const badges = allTimeContributor.badges || [];
+      // Compute badges from period-filtered data (matches what the modal shows)
+      computeBadges(periodContributors);
+      const badges = (contributor && contributor.badges) || [];
 
       // Period label
       const pdfPeriodLabel = getDetailPeriodLabel(detailGranularity, detailPeriodOffset);
@@ -1599,6 +1669,8 @@
     priority_minor: "Minor bug fix",
     priority_undefined: "Undefined priority",
     ai_coauthor: "AI co-authored MR",
+    merge_sameday: "MR merged same day",
+    merge_within_week: "MR merged within a week",
   };
 
   const BADGE_LABELS = {
@@ -1612,6 +1684,7 @@
     team_player: "🤝 Team Player",
     globe_trotter: "🌍 Globe Trotter",
     ai_jedi: "🤖 AI Jedi",
+    speed_demon: "🏎️ Speed Demon",
   };
 
   const settingsBtn = $("#btn-settings");
@@ -1983,6 +2056,13 @@
       detailRepos.innerHTML = '<div style="color:var(--text-muted);font-size:0.8rem;">No repositories</div>';
     }
 
+    // Recompute badges for the selected period
+    computeBadges(periodContributors);
+    const badges = (contributor && contributor.badges) || [];
+    detailBadges.innerHTML = badges.length
+      ? badges.map((b) => `<span class="lb-badge ${b.css}" title="${escapeHtml(b.title)}">${b.icon} ${escapeHtml(b.label)}</span>`).join("")
+      : "";
+
     renderDetailCharts(username, period, offset);
     renderDetailCollaborators(
       contributor || { username, name: username, authored_mrs: [], comments: 0, commentsOnOwn: 0, approvals: 0 },
@@ -2009,13 +2089,6 @@
     }
     detailName.textContent = contributor.name;
     detailUsername.textContent = `@${contributor.username}`;
-
-    // Compute and render badges for this contributor (all-time)
-    computeBadges(contributors);
-    const badges = contributor.badges || [];
-    detailBadges.innerHTML = badges.length
-      ? badges.map((b) => `<span class="lb-badge ${b.css}" title="${escapeHtml(b.title)}">${b.icon} ${escapeHtml(b.label)}</span>`).join("")
-      : "";
 
     detailCurrentUsername = username;
     detailPeriodOffset = 0;
