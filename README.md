@@ -21,6 +21,10 @@ It ranks contributors using a configurable scoring system based on MRs authored,
 
 ## Demo
 
+### Live Demo
+
+🚀 **Try it now:** [https://my1.fr/glab-stats/](https://my1.fr/glab-stats/)
+
 ### Fetching Data
 
 <a href="https://asciinema.org/a/CxaKkJVrwyEZ3YBH"><img src="https://asciinema.org/a/CxaKkJVrwyEZ3YBH.svg" alt="asciicast" width="500"></a>
