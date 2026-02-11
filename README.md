@@ -61,7 +61,7 @@ A lightweight dashboard that displays team-level aggregate metrics and individua
        - url: https://github.com/your-org/web-app
      docs-team:
        - url: https://gitlab.com/your-org/documentation
-         skip_scoring: [lines]  # Exclude LOC for docs repos
+         # url: https://gitlab.com/your-org/more-docs
    ```
 
 4. **Fetch data**
@@ -90,7 +90,6 @@ A lightweight dashboard that displays team-level aggregate metrics and individua
 ## Configuration
 
 - **Team filtering** — Use the team dropdown to filter contributors and repositories by team
-- **Repository filtering** — Add `skip_scoring: [lines, comments, approvals]` to exclude categories per repo
 - **Settings** — Two options: "Show All Teams" toggle and "AI Adoption Threshold" (percentage of AI co-authored MRs a contributor needs to be counted in the AI Adoption metric, default 30%)
 - **Jira integration** — Extracts ticket IDs from MR/PR titles (e.g., `RHEL-1234: fix bug`)
 

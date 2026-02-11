@@ -184,23 +184,15 @@ def load_config(config_path=None):
     repo_by_url: dict[str, dict] = {}
     for team_name, entries in raw.items():
         for entry in entries or []:
-            if isinstance(entry, str):
-                url = entry
-                skip = []
-            else:
-                url = entry["url"]
-                skip = entry.get("skip_scoring", [])
+            url = entry if isinstance(entry, str) else entry["url"]
 
             if url in repo_by_url:
-                # Merge: union skip_scoring, append team
                 existing = repo_by_url[url]
-                existing["skip_scoring"] = list(set(existing["skip_scoring"]) | set(skip))
                 if team_name not in existing["teams"]:
                     existing["teams"].append(team_name)
             else:
                 repo_by_url[url] = {
                     "url": url,
-                    "skip_scoring": skip,
                     "teams": [team_name],
                 }
 
@@ -656,7 +648,6 @@ def main():
 
     for repo_cfg in repos:
         repo_url = repo_cfg["url"]
-        skip_scoring = repo_cfg["skip_scoring"]
         forge = detect_forge(repo_url)
 
         if forge == "github":
@@ -704,7 +695,6 @@ def main():
                 "name": repo_path.split("/")[-1],
                 "full_path": repo_path,
                 "web_url": repo_url,
-                "skip_scoring": skip_scoring,
                 "teams": repo_cfg.get("teams", []),
                 "merge_requests": mrs,
             }
