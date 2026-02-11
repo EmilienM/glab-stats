@@ -427,6 +427,8 @@ def fetch_merge_requests(
     }
     all_mrs: list[dict] = []
     seen_iids: set[int] = set()
+    empty_window_count = 0
+    max_empty_windows = 5
 
     def _dbg(msg: str) -> None:
         if verbose:
@@ -437,20 +439,29 @@ def fetch_merge_requests(
 
         Returns True if a new window was set, False if we cannot continue.
         """
+        nonlocal empty_window_count
         if not all_mrs:
             return False
-        oldest_ts = all_mrs[-1]["created_at"]
+        if empty_window_count >= max_empty_windows:
+            _dbg(f"Reached {max_empty_windows} consecutive empty windows, stopping.")
+            return False
         delta = _compute_window_delta(all_mrs)
         if delta is None:
             return False
-        before_dt = datetime.fromisoformat(oldest_ts)
+        # If a window is already active, slide it back by using the current
+        # created_after as the new created_before instead of re-anchoring on
+        # the same oldest MR (which would produce the same window forever).
+        if "created_before" in params and "created_after" in params:
+            before_dt = datetime.fromisoformat(str(params["created_after"]))
+        else:
+            before_dt = datetime.fromisoformat(all_mrs[-1]["created_at"])
         after_dt = before_dt - delta
-        params["created_before"] = oldest_ts
+        params["created_before"] = before_dt.isoformat()
         params["created_after"] = after_dt.isoformat()
         params["page"] = 1
         _dbg(
-            f"Shifting window: created_before={oldest_ts}, "
-            f"created_after={after_dt.isoformat()}, delta={delta}"
+            f"Shifting window: created_before={params['created_before']}, "
+            f"created_after={params['created_after']}, delta={delta}"
         )
         return True
 
@@ -489,6 +500,7 @@ def fetch_merge_requests(
         data = resp.json()
         if not data:
             _dbg("Empty response body in current window.")
+            empty_window_count += 1
             # Window exhausted — slide to the next one
             if _shift_window():
                 continue
@@ -496,6 +508,7 @@ def fetch_merge_requests(
 
         _dbg(f"Got {len(data)} items in this page.")
 
+        empty_window_count = 0
         new_in_page = False
         for mr in data:
             if len(all_mrs) >= limit:
