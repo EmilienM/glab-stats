@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fetch merge request data from GitLab repositories and generate a JSON file."""
+"""Fetch merge request / pull request data from GitLab and GitHub repositories."""
 
 import argparse
 import json
@@ -16,6 +16,8 @@ from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponen
 from tqdm import tqdm
 
 GITLAB_API_BASE = "https://gitlab.com/api/v4"
+GITHUB_API_BASE = "https://api.github.com"
+GITHUB_API_VERSION = "2022-11-28"
 JIRA_BASE_URL = "https://issues.redhat.com"
 OUTPUT_PATH = os.path.join(os.path.dirname(__file__), "frontend", "data", "data.json")
 DEFAULT_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "repos.yaml")
@@ -155,6 +157,22 @@ def _checked_get(session, url, **kwargs):
     return resp
 
 
+def _github_paginated_get(session, url, per_page=100, params=None):
+    """Yield pages of JSON from a paginated GitHub API endpoint."""
+    req_params = dict(params or {})
+    req_params["per_page"] = per_page
+    req_params["page"] = 1
+    while True:
+        resp = _checked_get(session, url, params=req_params)
+        data = resp.json()
+        if not data:
+            break
+        yield data
+        if len(data) < per_page:
+            break
+        req_params["page"] += 1
+
+
 def load_config(config_path=None):
     if config_path is None:
         config_path = DEFAULT_CONFIG_PATH
@@ -166,23 +184,15 @@ def load_config(config_path=None):
     repo_by_url: dict[str, dict] = {}
     for team_name, entries in raw.items():
         for entry in entries or []:
-            if isinstance(entry, str):
-                url = entry
-                skip = []
-            else:
-                url = entry["url"]
-                skip = entry.get("skip_scoring", [])
+            url = entry if isinstance(entry, str) else entry["url"]
 
             if url in repo_by_url:
-                # Merge: union skip_scoring, append team
                 existing = repo_by_url[url]
-                existing["skip_scoring"] = list(set(existing["skip_scoring"]) | set(skip))
                 if team_name not in existing["teams"]:
                     existing["teams"].append(team_name)
             else:
                 repo_by_url[url] = {
                     "url": url,
-                    "skip_scoring": skip,
                     "teams": [team_name],
                 }
 
@@ -191,6 +201,15 @@ def load_config(config_path=None):
     teams = sorted(raw.keys())
     bot_accounts = set(config.get("bot_accounts", []))
     return repos, bot_accounts, teams
+
+
+def detect_forge(url):
+    """Return 'github' or 'gitlab' based on the URL prefix."""
+    if url.startswith("https://github.com/"):
+        return "github"
+    if url.startswith("https://gitlab.com/"):
+        return "gitlab"
+    raise ValueError(f"Unsupported forge URL: {url}")
 
 
 def extract_project_path(url):
@@ -203,6 +222,18 @@ def extract_project_path(url):
     if url.startswith(prefix):
         return url[len(prefix) :]
     raise ValueError(f"Unsupported GitLab URL: {url}")
+
+
+def extract_github_repo_path(url):
+    """Extract owner/repo from a GitHub URL.
+
+    e.g. https://github.com/owner/repo -> owner/repo
+    """
+    url = url.rstrip("/")
+    prefix = "https://github.com/"
+    if url.startswith(prefix):
+        return url[len(prefix) :]
+    raise ValueError(f"Unsupported GitHub URL: {url}")
 
 
 def fetch_merge_requests(session, project_path, limit, bot_accounts):
@@ -400,21 +431,161 @@ def _fetch_mr_details(session, jira_session, project_path, mr, bot_accounts):
     return mr
 
 
+def fetch_github_pull_requests(session, repo_path, limit, bot_accounts):
+    """Fetch pull requests for a GitHub repo, up to `limit`, handling pagination."""
+    url = f"{GITHUB_API_BASE}/repos/{repo_path}/pulls"
+    params = {"state": "all", "sort": "created", "direction": "desc"}
+    all_prs: list[dict] = []
+
+    for page in _github_paginated_get(session, url, per_page=min(limit, 100), params=params):
+        for pr in page:
+            if len(all_prs) >= limit:
+                break
+            author_login = (pr.get("user") or {}).get("login", "unknown")
+
+            if is_bot_account(author_login, bot_accounts):
+                continue
+
+            pr_body = pr.get("body") or ""
+
+            # Map GitHub state to the gitlab-compatible format
+            if pr.get("merged_at"):
+                state = "merged"
+            elif pr["state"] == "closed":
+                state = "closed"
+            else:
+                state = "opened"
+
+            all_prs.append(
+                {
+                    "iid": pr["number"],
+                    "title": pr["title"],
+                    "state": state,
+                    "created_at": pr["created_at"],
+                    "merged_at": pr.get("merged_at"),
+                    "updated_at": pr["updated_at"],
+                    "web_url": pr["html_url"],
+                    "ai_coauthored": detect_ai_coauthor(pr_body),
+                    "co_authors": extract_human_coauthors(pr_body),
+                    "author": {
+                        "username": author_login,
+                        "name": author_login,
+                        "avatar_url": (pr.get("user") or {}).get("avatar_url", ""),
+                    },
+                }
+            )
+        if len(all_prs) >= limit:
+            break
+
+    return all_prs
+
+
+def fetch_github_pr_diff_stats(session, repo_path, pr_number):
+    """Fetch diff stats (additions/deletions) for a single GitHub pull request."""
+    url = f"{GITHUB_API_BASE}/repos/{repo_path}/pulls/{pr_number}"
+    resp = _checked_get(session, url)
+    data = resp.json()
+    return data.get("additions", 0), data.get("deletions", 0)
+
+
+def fetch_github_pr_comments(session, repo_path, pr_number, bot_accounts):
+    """Fetch comments for a GitHub pull request (issue + review comments)."""
+    comments: list[dict[str, str]] = []
+
+    # Issue comments
+    issue_url = f"{GITHUB_API_BASE}/repos/{repo_path}/issues/{pr_number}/comments"
+    for page in _github_paginated_get(session, issue_url):
+        for comment in page:
+            username = (comment.get("user") or {}).get("login", "unknown")
+            if is_bot_account(username, bot_accounts):
+                continue
+            comments.append(
+                {
+                    "username": username,
+                    "name": username,
+                    "avatar_url": (comment.get("user") or {}).get("avatar_url", ""),
+                    "created_at": comment.get("created_at", ""),
+                }
+            )
+
+    # Pull request review comments (inline)
+    review_url = f"{GITHUB_API_BASE}/repos/{repo_path}/pulls/{pr_number}/comments"
+    for page in _github_paginated_get(session, review_url):
+        for comment in page:
+            username = (comment.get("user") or {}).get("login", "unknown")
+            if is_bot_account(username, bot_accounts):
+                continue
+            comments.append(
+                {
+                    "username": username,
+                    "name": username,
+                    "avatar_url": (comment.get("user") or {}).get("avatar_url", ""),
+                    "created_at": comment.get("created_at", ""),
+                }
+            )
+
+    return comments
+
+
+def fetch_github_pr_approvals(session, repo_path, pr_number, bot_accounts):
+    """Fetch approvals for a GitHub pull request from reviews."""
+    url = f"{GITHUB_API_BASE}/repos/{repo_path}/pulls/{pr_number}/reviews"
+    approvers = []
+
+    for page in _github_paginated_get(session, url):
+        for review in page:
+            if review.get("state") != "APPROVED":
+                continue
+            username = (review.get("user") or {}).get("login", "unknown")
+            if is_bot_account(username, bot_accounts):
+                continue
+            approvers.append(
+                {
+                    "username": username,
+                    "name": username,
+                    "avatar_url": (review.get("user") or {}).get("avatar_url", ""),
+                    "approved_at": review.get("submitted_at", ""),
+                }
+            )
+
+    return approvers
+
+
+def _fetch_github_pr_details(session, jira_session, repo_path, pr, bot_accounts):
+    """Fetch diff stats, comments, approvals, and Jira priority for a single PR."""
+    additions, deletions = fetch_github_pr_diff_stats(session, repo_path, pr["iid"])
+    pr["additions"] = additions
+    pr["deletions"] = deletions
+    pr["commenters"] = fetch_github_pr_comments(session, repo_path, pr["iid"], bot_accounts)
+    pr["approvers"] = fetch_github_pr_approvals(session, repo_path, pr["iid"], bot_accounts)
+
+    jira_key = extract_jira_key(pr["title"])
+    pr["jira_key"] = jira_key
+    if jira_key and jira_session:
+        pr["jira_priority"] = fetch_jira_priority(jira_session, jira_key)
+    else:
+        pr["jira_priority"] = None
+
+    return pr
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Fetch GitLab merge request data.")
+    parser = argparse.ArgumentParser(
+        description="Fetch merge request / pull request data from GitLab and GitHub."
+    )
     parser.add_argument(
         "-n",
         "--limit",
         type=int,
         default=20,
-        help="Number of most recent MRs to fetch per repo (default: 20)",
+        help="Number of most recent MRs/PRs to fetch per repo (default: 20)",
     )
     parser.add_argument(
         "-w",
         "--workers",
         type=int,
         default=4,
-        help="Number of concurrent threads for fetching MR details (default: 4)",
+        help="Number of concurrent threads for fetching details (default: 4)",
     )
     parser.add_argument(
         "-r",
@@ -425,23 +596,41 @@ def main():
     )
     args = parser.parse_args()
 
-    token = os.environ.get("GITLAB_TOKEN")
-    if not token:
-        print("Error: GITLAB_TOKEN environment variable is not set.", file=sys.stderr)
-        sys.exit(1)
-
     repos, bot_accounts, teams = load_config(args.repos)
     if not repos:
         config_file = args.repos or DEFAULT_CONFIG_PATH
         print(f"Error: No repositories found in {config_file}.", file=sys.stderr)
         sys.exit(1)
 
+    # Determine which forges are needed
+    forges_needed: set[str] = set()
+    for repo_cfg in repos:
+        forges_needed.add(detect_forge(repo_cfg["url"]))
+
+    # Create sessions per forge, only requiring tokens for forges in use
+    gitlab_session = None
+    if "gitlab" in forges_needed:
+        gitlab_token = os.environ.get("GITLAB_TOKEN")
+        if not gitlab_token:
+            print("Error: GITLAB_TOKEN environment variable is not set.", file=sys.stderr)
+            sys.exit(1)
+        gitlab_session = requests.Session()
+        gitlab_session.headers["PRIVATE-TOKEN"] = gitlab_token
+
+    github_session = None
+    if "github" in forges_needed:
+        github_token = os.environ.get("GITHUB_TOKEN")
+        if not github_token:
+            print("Error: GITHUB_TOKEN environment variable is not set.", file=sys.stderr)
+            sys.exit(1)
+        github_session = requests.Session()
+        github_session.headers["Authorization"] = f"Bearer {github_token}"
+        github_session.headers["Accept"] = "application/vnd.github+json"
+        github_session.headers["X-GitHub-Api-Version"] = GITHUB_API_VERSION
+
     if bot_accounts:
         bot_list = ", ".join(sorted(bot_accounts))
         print(f"Configured to ignore {len(bot_accounts)} bot accounts: {bot_list}")
-
-    session = requests.Session()
-    session.headers["PRIVATE-TOKEN"] = token
 
     jira_token = os.environ.get("JIRA_API_TOKEN")
     jira_session = None
@@ -459,18 +648,32 @@ def main():
 
     for repo_cfg in repos:
         repo_url = repo_cfg["url"]
-        skip_scoring = repo_cfg["skip_scoring"]
-        project_path = extract_project_path(repo_url)
-        print(f"Fetching up to {args.limit} MRs for {project_path}...")
+        forge = detect_forge(repo_url)
 
-        mrs = fetch_merge_requests(session, project_path, args.limit, bot_accounts)
-        print(f"  Found {len(mrs)} merge requests.")
+        if forge == "github":
+            repo_path = extract_github_repo_path(repo_url)
+            # github_session is guaranteed non-None: we sys.exit(1) above if token is missing
+            session = github_session  # type: ignore[assignment]
+            print(f"Fetching up to {args.limit} PRs for {repo_path}...")
+            mrs = fetch_github_pull_requests(session, repo_path, args.limit, bot_accounts)
+            print(f"  Found {len(mrs)} pull requests.")
+            detail_fn = _fetch_github_pr_details
+            unit = "PR"
+        else:
+            repo_path = extract_project_path(repo_url)
+            # gitlab_session is guaranteed non-None: we sys.exit(1) above if token is missing
+            session = gitlab_session  # type: ignore[assignment]
+            print(f"Fetching up to {args.limit} MRs for {repo_path}...")
+            mrs = fetch_merge_requests(session, repo_path, args.limit, bot_accounts)
+            print(f"  Found {len(mrs)} merge requests.")
+            detail_fn = _fetch_mr_details
+            unit = "MR"
 
         future_to_idx = {}
         with ThreadPoolExecutor(max_workers=args.workers) as executor:
             for i, mr in enumerate(mrs):
                 future = executor.submit(
-                    _fetch_mr_details, session, jira_session, project_path, mr, bot_accounts
+                    detail_fn, session, jira_session, repo_path, mr, bot_accounts
                 )
                 future_to_idx[future] = i
 
@@ -479,8 +682,8 @@ def main():
             )
             with tqdm(
                 total=len(mrs),
-                desc=f"  {project_path}",
-                unit="MR",
+                desc=f"  {repo_path}",
+                unit=unit,
                 bar_format=bar_fmt,
             ) as pbar:
                 for future in as_completed(future_to_idx):
@@ -489,10 +692,9 @@ def main():
 
         result["repositories"].append(
             {
-                "name": project_path.split("/")[-1],
-                "full_path": project_path,
+                "name": repo_path.split("/")[-1],
+                "full_path": repo_path,
                 "web_url": repo_url,
-                "skip_scoring": skip_scoring,
                 "teams": repo_cfg.get("teams", []),
                 "merge_requests": mrs,
             }

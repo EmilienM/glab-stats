@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-GitLab Contributions Tracker — a web dashboard that displays team-level aggregate metrics and individual contributor activity across multiple GitLab repositories. Optional Jira integration for bug priority data.
+Dev Pulse — a web dashboard that displays team-level aggregate metrics and individual contributor activity across multiple GitLab and GitHub repositories. Optional Jira integration for bug priority data.
 
 ## Running the Project
 
@@ -12,12 +12,12 @@ GitLab Contributions Tracker — a web dashboard that displays team-level aggreg
 # Install Python dependencies
 pip install -r requirements.txt
 
-# Fetch data (requires GITLAB_TOKEN env var; JIRA_API_TOKEN is optional)
-python fetch_data.py -n 50    # Fetch 50 MRs per repo
+# Fetch data (requires GITLAB_TOKEN and/or GITHUB_TOKEN depending on repos; JIRA_API_TOKEN is optional)
+python fetch_data.py -n 50    # Fetch 50 MRs/PRs per repo
 python fetch_data.py -n 100 -w 8 -r custom-repos.yaml  # With custom options
 
 # Command-line options:
-# -n, --limit: Number of recent MRs to fetch per repo (default: 20)
+# -n, --limit: Number of recent MRs/PRs to fetch per repo (default: 20)
 # -w, --workers: Concurrent threads for fetching details (default: 4)
 # -r, --repos: Path to repos configuration file (default: repos.yaml)
 
@@ -29,7 +29,7 @@ Output is written to `frontend/data/data.json`.
 
 ## Architecture
 
-**Backend:** `fetch_data.py` — single Python script that calls the GitLab REST API (paginated), aggregates MR data (diffs, comments, approvals), optionally fetches Jira priorities, and writes JSON output. Uses `tenacity` for retry with exponential backoff on 5xx errors.
+**Backend:** `fetch_data.py` — single Python script that calls the GitLab and GitHub REST APIs (paginated), aggregates MR/PR data (diffs, comments, approvals), optionally fetches Jira priorities, and writes JSON output. Uses `tenacity` for retry with exponential backoff on 5xx errors. Forge detection is automatic based on the repository URL prefix (`https://gitlab.com/` or `https://github.com/`).
 
 **Frontend:** Vanilla JavaScript (`app.js`) + HTML/CSS, no build step. Uses Chart.js (CDN) for timeline visualization and jsPDF (CDN) for PDF export.
 
@@ -44,7 +44,7 @@ Output is written to `frontend/data/data.json`.
 
 ### Configuration
 
-- `repos.yaml` — list of GitLab repository URLs to track.
+- `repos.yaml` — list of GitLab and/or GitHub repository URLs to track.
 - Settings: "Show All Teams" toggle and "AI Adoption Threshold" (stored in localStorage).
 
 ## Linting

@@ -1,4 +1,4 @@
-/** GitLab Contributions Tracker — Team Activity Dashboard */
+/** Dev Pulse — Team Activity Dashboard */
 
 (function () {
   "use strict";
@@ -118,7 +118,6 @@
 
       allMRs = [];
       for (const repo of repositories) {
-        const skip = new Set(repo.skip_scoring || []);
         const repoTeams = repo.teams || [];
         for (const mr of repo.merge_requests) {
           allMRs.push({
@@ -126,7 +125,6 @@
             repoName: repo.name,
             repoPath: repo.full_path,
             repoTeams,
-            skipScoring: skip,
           });
         }
       }
@@ -491,35 +489,26 @@
     const map = new Map();
 
     for (const mr of mrs) {
-      const skip = mr.skipScoring || new Set();
-
       if (isDateInBounds(mr.created_at, bounds)) {
-        const mrForAuthor = skip.has("lines")
-          ? { ...mr, additions: 0, deletions: 0 }
-          : mr;
         const author = ensureContributor(map, mr.author);
-        author.authored_mrs.push(mrForAuthor);
+        author.authored_mrs.push(mr);
       }
 
-      if (!skip.has("comments")) {
-        for (const c of (mr.commenters || [])) {
-          if (!isDateInBounds(c.created_at, bounds)) continue;
-          const contributor = ensureContributor(map, c);
-          contributor.comments += 1;
-          contributor.comment_dates.push(c.created_at);
-          if (c.username === mr.author.username) {
-            contributor.commentsOnOwn += 1;
-          }
+      for (const c of (mr.commenters || [])) {
+        if (!isDateInBounds(c.created_at, bounds)) continue;
+        const contributor = ensureContributor(map, c);
+        contributor.comments += 1;
+        contributor.comment_dates.push(c.created_at);
+        if (c.username === mr.author.username) {
+          contributor.commentsOnOwn += 1;
         }
       }
 
-      if (!skip.has("approvals")) {
-        for (const a of (mr.approvers || [])) {
-          if (!isDateInBounds(a.approved_at, bounds)) continue;
-          const contributor = ensureContributor(map, a);
-          contributor.approvals += 1;
-          contributor.approval_dates.push(a.approved_at);
-        }
+      for (const a of (mr.approvers || [])) {
+        if (!isDateInBounds(a.approved_at, bounds)) continue;
+        const contributor = ensureContributor(map, a);
+        contributor.approvals += 1;
+        contributor.approval_dates.push(a.approved_at);
       }
     }
 
@@ -1761,7 +1750,7 @@
       const finalY = doc.lastAutoTable.finalY + 8;
       doc.setFontSize(7);
       doc.setTextColor(150);
-      doc.text(`Generated on ${new Date().toLocaleString()} \u2014 GitLab Contributions Tracker`, 14, finalY);
+      doc.text(`Generated on ${new Date().toLocaleString()} \u2014 Dev Pulse`, 14, finalY);
 
       const filename = `team-activity-${new Date().toISOString().slice(0, 10)}.pdf`;
       doc.save(filename);
@@ -2012,7 +2001,7 @@
       }
       doc.setFontSize(7);
       doc.setTextColor(150);
-      doc.text(`Generated on ${new Date().toLocaleString()} \u2014 GitLab Contributions Tracker`, 14, y);
+      doc.text(`Generated on ${new Date().toLocaleString()} \u2014 Dev Pulse`, 14, y);
 
       const filename = `contributor-${allTimeContributor.username}-${new Date().toISOString().slice(0, 10)}.pdf`;
       doc.save(filename);
@@ -2500,35 +2489,27 @@
     for (const mr of allMRsFiltered) {
       const key = getBucketKey(mr.created_at, gran);
       if (key < startKey || key > endKey) continue;
-      const skip = mr.skipScoring || new Set();
-
       if (mr.author.username === username) {
         const b = ensure(key);
         b.authored++;
         if (mr.state === "merged") b.merged++;
-        if (!skip.has("lines")) {
-          b.adds += mr.additions || 0;
-          b.dels += mr.deletions || 0;
-        }
+        b.adds += mr.additions || 0;
+        b.dels += mr.deletions || 0;
         if (mr.ai_coauthored) b.aiCoauthored++;
       }
 
-      if (!skip.has("comments")) {
-        for (const c of (mr.commenters || [])) {
-          if (c.username !== username) continue;
-          const cKey = c.created_at ? getBucketKey(c.created_at, gran) : key;
-          if (cKey < startKey || cKey > endKey) continue;
-          ensure(cKey).comments += 1;
-        }
+      for (const c of (mr.commenters || [])) {
+        if (c.username !== username) continue;
+        const cKey = c.created_at ? getBucketKey(c.created_at, gran) : key;
+        if (cKey < startKey || cKey > endKey) continue;
+        ensure(cKey).comments += 1;
       }
 
-      if (!skip.has("approvals")) {
-        for (const a of (mr.approvers || [])) {
-          if (a.username !== username) continue;
-          const aKey = a.approved_at ? getBucketKey(a.approved_at, gran) : key;
-          if (aKey < startKey || aKey > endKey) continue;
-          ensure(aKey).approvals++;
-        }
+      for (const a of (mr.approvers || [])) {
+        if (a.username !== username) continue;
+        const aKey = a.approved_at ? getBucketKey(a.approved_at, gran) : key;
+        if (aKey < startKey || aKey > endKey) continue;
+        ensure(aKey).approvals++;
       }
     }
 

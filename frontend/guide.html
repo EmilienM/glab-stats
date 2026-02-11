@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Guide — GitLab Contributions Tracker</title>
+  <title>Guide — Dev Pulse</title>
   <link rel="stylesheet" href="style.css">
   <style>
     .guide {
@@ -91,8 +91,8 @@
 
     <h2>What is this?</h2>
     <p>
-      A lightweight dashboard that tracks merge request activity across
-      one or more private GitLab repositories. Repositories can be organized
+      A lightweight dashboard that tracks merge request and pull request activity across
+      one or more GitLab and GitHub repositories. Repositories can be organized
       by teams for filtered analysis. The dashboard provides team-level
       aggregate metrics to help managers understand team health, with
       individual contributor activity available for coaching conversations.
@@ -101,7 +101,8 @@
     <h2>Quick start</h2>
     <ol>
       <li>Install Python dependencies: <code>pip install -r requirements.txt</code></li>
-      <li>Set your GitLab token: <code>export GITLAB_TOKEN="glpat-..."</code></li>
+      <li>Set your GitLab token (if using GitLab repos): <code>export GITLAB_TOKEN="glpat-..."</code></li>
+      <li>Set your GitHub token (if using GitHub repos): <code>export GITHUB_TOKEN="ghp_..."</code></li>
       <li>Set your Jira token (optional): <code>export JIRA_API_TOKEN="..."</code></li>
       <li>Configure repositories in <code>repos.yaml</code></li>
       <li>Fetch data: <code>python fetch_data.py</code></li>
@@ -110,15 +111,16 @@
 
     <h2>Fetching data</h2>
     <p>
-      <code>fetch_data.py</code> calls the GitLab API to collect merge requests,
-      diffs, comments, and approvals. If <code>JIRA_API_TOKEN</code> is set, it also
-      extracts Jira ticket IDs from MR titles and fetches their priority.
+      <code>fetch_data.py</code> calls the GitLab and GitHub APIs to collect merge requests
+      and pull requests, including diffs, comments, and approvals. If <code>JIRA_API_TOKEN</code>
+      is set, it also extracts Jira ticket IDs from MR/PR titles and fetches their priority.
       Output is written to <code>frontend/data/data.json</code>.
     </p>
     <pre>python fetch_data.py -n 50   # fetch the 50 most recent MRs per repo (default: 20)</pre>
     <table>
       <tr><th>Variable</th><th>Required</th><th>Description</th></tr>
-      <tr><td><code>GITLAB_TOKEN</code></td><td>Yes</td><td>GitLab PAT with <code>read_api</code> scope</td></tr>
+      <tr><td><code>GITLAB_TOKEN</code></td><td>If GitLab repos configured</td><td>GitLab PAT with <code>read_api</code> scope</td></tr>
+      <tr><td><code>GITHUB_TOKEN</code></td><td>If GitHub repos configured</td><td>GitHub PAT with <code>repo</code> scope (or fine-grained with read access)</td></tr>
       <tr><td><code>JIRA_API_TOKEN</code></td><td>No</td><td>Jira PAT for bug priority lookup (issues.redhat.com)</td></tr>
     </table>
 
@@ -127,12 +129,15 @@
     <pre>repositories:
   backend-team:
     - url: https://gitlab.com/org/api-service
-    - url: https://gitlab.com/org/user-service
+    - url: https://github.com/org/user-service
   frontend-team:
-    - url: https://gitlab.com/org/web-app
+    - url: https://github.com/org/web-app
   docs-team:
     - url: https://gitlab.com/org/documentation</pre>
     <p>
+      Both GitLab (<code>https://gitlab.com/...</code>) and GitHub
+      (<code>https://github.com/...</code>) URLs are supported and can be
+      mixed freely. The forge is detected automatically from the URL prefix.
       The team-based format allows filtering contributors by team in the UI.
     </p>
 

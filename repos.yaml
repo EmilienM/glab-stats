@@ -1,12 +1,5 @@
 # Repositories are organized by team.
 # Each entry can be a URL string or an object with options.
-# skip_scoring: list of scoring categories to exclude for this repo.
-# Valid values: lines, comments, approvals
-#
-# Example: a docs-heavy repo where LOC scoring is unfair
-# - url: https://gitlab.com/org/docs-repo
-#   skip_scoring:
-#     - lines
 
 # Bot accounts to ignore in the UI
 # List usernames that should be excluded from contributor rankings
@@ -19,13 +12,8 @@ bot_accounts:
   # Add more bot accounts as needed
 
 repositories:
-  gitlab-core:
+  vllm:
+    - url: https://github.com/vllm-project/vllm
+  gitlab:
     - url: https://gitlab.com/gitlab-org/gitlab
-    - url: https://gitlab.com/gitlab-org/gitlab-docs
-      skip_scoring:
-        - lines
-  gitlab-runner:
     - url: https://gitlab.com/gitlab-org/gitlab-runner
-  mobile:
-    - url: https://gitlab.com/fdroid/fdroidclient
-    - url: https://gitlab.com/postmarketos/pmaports
