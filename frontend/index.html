@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>GitLab Contributions Tracker</title>
-  <link rel="stylesheet" href="style.css?v=5">
+  <link rel="stylesheet" href="style.css?v=6">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2/dist/jspdf.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3/dist/jspdf.plugin.autotable.min.js"></script>
@@ -42,10 +42,6 @@
           </select>
         </div>
         <div class="filter-group">
-          <label for="metric-select">Rank by</label>
-          <select id="metric-select"></select>
-        </div>
-        <div class="filter-group">
           <label for="contributor-search">Find Contributor</label>
           <div class="search-container">
             <input type="text" id="contributor-search" placeholder="Search by name or username...">
@@ -55,12 +51,6 @@
         <div class="filter-meta">
           <span id="generated-at" class="generated-at"></span>
         </div>
-      </section>
-
-      <!-- Score Legend -->
-      <section id="score-legend" class="score-legend" hidden>
-        <h3 class="score-legend-title">Scoring</h3>
-        <div class="score-legend-items" id="score-legend-items"></div>
       </section>
 
       <!-- Timeline -->
@@ -85,17 +75,18 @@
         </div>
       </section>
 
-      <!-- Leaderboard -->
-      <section class="leaderboard">
+      <!-- Team Aggregate Metrics -->
+      <section class="aggregate-section">
         <div class="leaderboard-period" id="leaderboard-period"></div>
-        <div class="leaderboard-header">
-          <span class="lh-rank">#</span>
-          <span class="lh-contributor">Contributor</span>
-          <span class="lh-bar">Relative to #1</span>
-          <span class="lh-breakdown">Breakdown</span>
-          <span class="lh-value">Score</span>
-        </div>
-        <div id="leaderboard-body"></div>
+        <div class="aggregate-cards" id="aggregate-cards"></div>
+      </section>
+
+      <!-- Contributor List -->
+      <section class="contributors-section">
+        <button class="contributor-list-toggle" id="contributor-list-toggle" aria-expanded="false">
+          Individual Contributors (0) <span class="toggle-icon">&#9654;</span>
+        </button>
+        <div class="contributor-list-body" id="contributor-list-body" hidden></div>
       </section>
     </div>
   </main>
@@ -124,7 +115,6 @@
           <div>
             <div id="detail-name" class="modal-title"></div>
             <div id="detail-username" class="lb-username"></div>
-            <div id="detail-badges" class="detail-badges"></div>
           </div>
         </div>
         <div class="detail-header-actions">
@@ -158,7 +148,7 @@
           </div>
         </section>
         <section class="detail-section">
-          <h3 class="detail-section-title">Metrics</h3>
+          <h3 class="detail-section-title">Activity Summary</h3>
           <div id="detail-metrics" class="detail-metrics-grid"></div>
         </section>
         <section class="detail-section">
@@ -192,6 +182,6 @@
     </div>
   </footer>
 
-  <script src="app.js?v=7"></script>
+  <script src="app.js?v=8"></script>
 </body>
 </html>

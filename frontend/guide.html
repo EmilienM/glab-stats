@@ -91,11 +91,11 @@
 
     <h2>What is this?</h2>
     <p>
-      A lightweight dashboard that tracks merge request contributions across
+      A lightweight dashboard that tracks merge request activity across
       one or more private GitLab repositories. Repositories can be organized
-      by teams for filtered analysis. It ranks contributors using a
-      configurable scoring system based on MRs authored, comments, approvals,
-      lines of code, Jira bug priority, and AI co-authorship.
+      by teams for filtered analysis. The dashboard provides team-level
+      aggregate metrics to help managers understand team health, with
+      individual contributor activity available for coaching conversations.
     </p>
 
     <h2>Quick start</h2>
@@ -121,11 +121,6 @@
       <tr><td><code>GITLAB_TOKEN</code></td><td>Yes</td><td>GitLab PAT with <code>read_api</code> scope</td></tr>
       <tr><td><code>JIRA_API_TOKEN</code></td><td>No</td><td>Jira PAT for bug priority lookup (issues.redhat.com)</td></tr>
     </table>
-    <p>
-      Jira ticket IDs are extracted from MR titles using the pattern <code>PROJECT-123</code>
-      (e.g. <code>RHEL-4567: fix foobar</code>). MRs without a Jira key get
-      an "Undefined" priority.
-    </p>
 
     <h2>Repository configuration</h2>
     <p>Repositories are organized by team in <code>repos.yaml</code> at the project root.</p>
@@ -136,61 +131,61 @@
   frontend-team:
     - url: https://gitlab.com/org/web-app
   docs-team:
-    - url: https://gitlab.com/org/documentation
-      skip_scoring:
-        - lines      # exclude LOC from scoring for this repo</pre>
+    - url: https://gitlab.com/org/documentation</pre>
     <p>
       The team-based format allows filtering contributors by team in the UI.
     </p>
-    <p>
-      <code>skip_scoring</code> accepts any combination of:
-    </p>
-    <table>
-      <tr><th>Value</th><th>Effect</th></tr>
-      <tr><td><code>lines</code></td><td>Excludes lines added / deleted from scoring</td></tr>
-      <tr><td><code>comments</code></td><td>Excludes comments from scoring</td></tr>
-      <tr><td><code>approvals</code></td><td>Excludes approvals from scoring</td></tr>
-    </table>
 
     <h2>Team filtering</h2>
     <p>
       When repositories are organized by team, a team dropdown filter appears
       in the dashboard. Selecting a team filters both the repository list and
-      contributor rankings to show only activity from that team's repositories.
+      contributor activity to show only data from that team's repositories.
     </p>
     <p>
       The "Show All Teams" option can be enabled in Settings to add an
       "All Teams" option to the dropdown, allowing you to view cross-team activity.
     </p>
 
-    <h2>Scoring system</h2>
+    <h2>Team aggregate metrics</h2>
     <p>
-      Weights are defined in <code>frontend/score-config.json</code> and can be
-      adjusted without touching any code.
+      The dashboard displays 8 team-level aggregate metrics with trend indicators
+      comparing the current period to the previous period:
     </p>
     <table>
-      <tr><th>Action</th><th>Config key</th><th>Default</th></tr>
-      <tr><td>MR merged</td><td><code>mr_merged</code></td><td>10</td></tr>
-      <tr><td>MR opened (not merged)</td><td><code>mr_open</code></td><td>1</td></tr>
-      <tr><td>Comment posted</td><td><code>comment</code></td><td>3</td></tr>
-      <tr><td>Approval given</td><td><code>approval</code></td><td>2</td></tr>
-      <tr><td>Line added</td><td><code>line_added</code></td><td>0.05</td></tr>
-      <tr><td>Line deleted</td><td><code>line_deleted</code></td><td>0.02</td></tr>
-      <tr><td>Critical bug fix</td><td><code>priority_critical</code></td><td>15</td></tr>
-      <tr><td>Major bug fix</td><td><code>priority_major</code></td><td>8</td></tr>
-      <tr><td>Normal bug fix</td><td><code>priority_normal</code></td><td>3</td></tr>
-      <tr><td>Minor bug fix</td><td><code>priority_minor</code></td><td>1</td></tr>
-      <tr><td>Undefined priority</td><td><code>priority_undefined</code></td><td>0</td></tr>
-      <tr><td>AI co-authored MR</td><td><code>ai_coauthor</code></td><td>5</td></tr>
-      <tr><td>MR merged same day</td><td><code>merge_sameday</code></td><td>3</td></tr>
-      <tr><td>MR merged within a week</td><td><code>merge_within_week</code></td><td>2</td></tr>
+      <tr><th>Metric</th><th>Description</th></tr>
+      <tr><td><strong>Merged MRs</strong></td><td>Total count of merged merge requests in the period</td></tr>
+      <tr><td><strong>Median Lead Time</strong></td><td>Median number of days from MR creation to merge</td></tr>
+      <tr><td><strong>Median Turnaround</strong></td><td>Median hours from MR creation to first non-author comment</td></tr>
+      <tr><td><strong>AI Co-Author Rate</strong></td><td>Percentage of MRs that were co-authored with AI tools</td></tr>
+      <tr><td><strong>AI Adoption</strong></td><td>Percentage of contributors with AI usage at or above the configured threshold</td></tr>
+      <tr><td><strong>Review Coverage</strong></td><td>Percentage of merged MRs that received at least one approval</td></tr>
+      <tr><td><strong>Active Contributors</strong></td><td>Count of contributors with any activity (MRs, comments, or reviews)</td></tr>
+      <tr><td><strong>Lines Changed</strong></td><td>Total lines added plus deleted across all MRs</td></tr>
     </table>
+    <p>
+      Trend arrows indicate whether each metric improved or worsened compared to the
+      previous period. For lead time and turnaround, a decrease (faster) is shown as positive.
+    </p>
+
+    <h2>Individual contributors</h2>
+    <p>
+      The collapsible "Individual Contributors" section lists all active contributors
+      alphabetically with activity mini-badges showing merged MRs, open/closed MRs,
+      reviews, and comments. Click a contributor to open their detail view with:
+    </p>
+    <ul>
+      <li><strong>Activity Summary</strong> &mdash; Total MRs, Merged MRs, Comments, Reviews Given, Avg Lead Time, AI Co-Authored %</li>
+      <li><strong>Activity Charts</strong> &mdash; MRs Merged, Comments, Approvals, AI Co-Authored (over time)</li>
+      <li><strong>Top Collaborators</strong> &mdash; People they review, comment on, and co-author with</li>
+      <li><strong>Repositories</strong> &mdash; Breakdown of activity by repository</li>
+      <li><strong>Recent Merge Requests</strong> &mdash; Latest MRs with status and links</li>
+    </ul>
 
     <h2>AI co-authorship detection</h2>
     <p>
       MR descriptions are scanned for trailers that indicate collaboration with
-      AI tools. When a match is found the MR is flagged as AI co-authored and
-      earns bonus score points.
+      AI tools. When a match is found the MR is flagged as AI co-authored.
     </p>
     <p><strong>Recognized trailers:</strong></p>
     <ul>
@@ -201,7 +196,7 @@
     <p>
       The value after the trailer is checked against known AI tool names:
       Claude, ChatGPT, Copilot, Gemini, Cursor, Codeium, Tabnine, Windsurf,
-      and others. Only trailers that reference an AI tool are counted — human
+      and others. Only trailers that reference an AI tool are counted &mdash; human
       co-authors are ignored.
     </p>
     <p>
@@ -209,54 +204,32 @@
     </p>
     <pre>Co-Authored-By: Claude &lt;noreply@anthropic.com&gt;</pre>
 
-    <h2>Available metrics</h2>
-    <p>Use the "Rank by" dropdown to switch between:</p>
-    <ul>
-      <li><strong>Score</strong> — weighted total (default)</li>
-      <li><strong>Total MRs</strong> — all authored merge requests</li>
-      <li><strong>Merged MRs / Open MRs</strong> — filtered by state</li>
-      <li><strong>Lines Added / Lines Changed</strong> — code volume</li>
-      <li><strong>Comments</strong> — review comments posted</li>
-      <li><strong>Approvals</strong> — approvals given</li>
-      <li><strong>Bug Priority</strong> — points from Jira ticket priority (Critical / Major / Normal / Minor)</li>
-      <li><strong>AI Co-Authored</strong> — number of MRs co-authored with AI tools</li>
-      <li><strong>Completion Time</strong> — average time to merge (faster = higher rank)</li>
-    </ul>
-
-    <h2>Achievement badges</h2>
-    <p>
-      Contributors earn colorful badges for standout performance. Badges are awarded to the
-      top contributors in each category (configurable percentile), but only if they also
-      meet a minimum threshold. Badges update dynamically based on the selected time period
-      and repository filters. Badge criteria and thresholds are configurable in the Settings modal.
-    </p>
-    <table>
-      <tr><th>Badge</th><th>Criteria</th><th>Threshold</th></tr>
-      <tr><td>⚡ Merge Machine</td><td>Top 10% by merged MRs</td><td>5 merged MRs</td></tr>
-      <tr><td>👁 Review Guru</td><td>Top 10% by approvals given</td><td>5 approvals</td></tr>
-      <tr><td>💬 Commentator</td><td>Top 10% by comments on others' MRs</td><td>10 comments</td></tr>
-      <tr><td>⛰ Code Colossus</td><td>Top 10% by lines added</td><td>500 lines</td></tr>
-      <tr><td>🧹 The Eraser</td><td>More lines deleted than added</td><td>100 deletions</td></tr>
-      <tr><td>🐛 Bug Slayer</td><td>Top 10% by Jira priority points</td><td>1 bug fix</td></tr>
-      <tr><td>✨ Perfectionist</td><td>100% merge rate (all MRs merged)</td><td>5 MRs authored</td></tr>
-      <tr><td>🤝 Team Player</td><td>Comments on others' MRs > 2x comments on own</td><td>5 comments on others</td></tr>
-      <tr><td>🌍 Globe Trotter</td><td>Contributes to 3+ distinct repositories</td><td>3 repos</td></tr>
-      <tr><td>🤖 AI Jedi</td><td>Top 10% by AI co-authored MRs</td><td>3 AI co-authored MRs</td></tr>
-      <tr><td>🏎 Speed Demon</td><td>Top 10% by average merge speed</td><td>3 merged MRs</td></tr>
-    </table>
-
     <h2>Timeline &amp; period filtering</h2>
     <p>
       The timeline chart shows MR activity over time. The granularity buttons
-      (Day / Week / Month / Year) control both the chart grouping and the
-      leaderboard period — contributors are ranked based on the current
-      day, week, month, or year.
+      (Day / Week / Month / Year / Custom) control the chart grouping.
+      Clicking a bar in the chart filters the aggregate metrics and contributor
+      list to that specific period. Click the same bar again to clear the filter.
     </p>
+
+    <h2>Settings</h2>
+    <p>
+      The Settings modal provides two options:
+    </p>
+    <ul>
+      <li><strong>Show "All Teams" filter</strong> &mdash; Adds an "All Teams" option to the team dropdown for cross-team views</li>
+      <li><strong>AI Adoption Threshold</strong> &mdash; The percentage of AI co-authored MRs a contributor needs to be counted in the AI Adoption metric (default: 30%)</li>
+    </ul>
 
     <h2>PDF export</h2>
     <p>
-      Click the <strong>PDF</strong> button to generate a report with the chart,
-      contributor table, and scoring legend (when ranked by Score).
+      Click the <strong>PDF</strong> button in the header to generate a Team Activity Report
+      with the timeline chart, aggregate metrics table, and alphabetical contributor list.
+    </p>
+    <p>
+      From a contributor's detail view, click <strong>PDF</strong> to generate an
+      Individual Activity Report with their metrics, charts, repository breakdown,
+      and recent merge requests.
     </p>
   </div>
 

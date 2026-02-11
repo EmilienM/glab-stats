@@ -2,21 +2,19 @@
 
 <img src="./banner.png" alt="Dashboard Screenshot" width="600">
 
-A lightweight dashboard that tracks merge request contributions across GitLab repositories.
-It ranks contributors using a configurable scoring system based on MRs authored, comments, approvals, lines of code, and Jira bug priority.
+A lightweight dashboard that displays team-level aggregate metrics and individual contributor activity across multiple GitLab repositories. Designed to surface team health indicators for managers, with individual activity data available for coaching conversations — no ranking, scoring, or competitive badges.
 
 ## Features
 
+- **Team aggregate metrics** — 8 key metrics (merged MRs, median lead time, median turnaround, AI co-author rate, AI adoption, review coverage, active contributors, lines changed) with period-over-period trend indicators
 - **Multi-repository tracking** — Configure multiple GitLab repositories in YAML
-- **Team-based organization** — Group repositories by teams and filter contributors by team
-- **Configurable scoring** — Customizable weights for different contribution types
-- **Achievement badges** — Visual badges for standout contributors (Merge Machine, Review Guru, AI Jedi, etc.)
-- **AI co-authorship tracking** — Detects AI-assisted MRs via description trailers (Co-Authored-By, Generated-By, etc.) and rewards collaboration with AI tools
-- **Jira integration** — Extract bug priority from MR titles and include in scoring
-- **Interactive timeline** — Click timeline bars to filter by specific time periods
-- **Progress tracking** — Monitor contributor activity trends over time with visual progress metrics
-- **Multiple metrics** — Score, MR count, lines of code, comments, approvals, bug priority, AI co-authored
-- **PDF export** — Generate reports with charts and contributor tables
+- **Team-based organization** — Group repositories by teams and filter by team
+- **AI co-authorship tracking** — Detects AI-assisted MRs via description trailers (Co-Authored-By, Generated-By, etc.) and tracks adoption across the team
+- **Jira integration** — Extract bug priority from MR titles
+- **Interactive timeline** — Click timeline bars to filter aggregate metrics and contributor list by specific time periods
+- **Individual contributor list** — Collapsible alphabetical list with activity badges; click to view detailed activity, charts, collaborators, and repository breakdown
+- **Interactive tooltips** — Hover over metric cards and activity badges for descriptions
+- **PDF export** — Team activity report and individual activity report
 - **Dark/light themes** — Responsive UI with theme switching
 
 ## Demo
@@ -90,10 +88,9 @@ It ranks contributors using a configurable scoring system based on MRs authored,
 
 ## Configuration
 
-- **Scoring weights** — Edit `frontend/score-config.json` or use the Settings modal in the UI
-- **Badge criteria** — Edit `frontend/badge-config.json` or use the Settings modal to configure thresholds and percentiles
 - **Team filtering** — Use the team dropdown to filter contributors and repositories by team
 - **Repository filtering** — Add `skip_scoring: [lines, comments, approvals]` to exclude categories per repo
+- **Settings** — Two options: "Show All Teams" toggle and "AI Adoption Threshold" (percentage of AI co-authored MRs a contributor needs to be counted in the AI Adoption metric, default 30%)
 - **Jira integration** — Extracts ticket IDs from MR titles (e.g., `RHEL-1234: fix bug`)
 
 ### AI Co-Authorship Detection
@@ -105,9 +102,9 @@ MR descriptions are scanned for trailers indicating AI collaboration:
 
 These are matched against known AI tools (Claude, ChatGPT, Copilot, Gemini, Cursor, etc.). When detected, the MR is flagged as AI co-authored, contributing to:
 
-- **Score** — `ai_coauthor` weight (default: 5 points per AI co-authored MR)
-- **AI Co-Authored metric** — Rank contributors by number of AI-assisted MRs
-- **AI Jedi badge** — Awarded to top AI collaborators (default: top 10%, minimum 3 MRs)
+- **AI Co-Author Rate** — Percentage of MRs co-authored with AI in the period
+- **AI Adoption** — Percentage of contributors meeting the AI usage threshold
+- **AI badge** — Shown on individual contributors in the contributor list
 
 ## License
 

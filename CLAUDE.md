@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-GitLab Contributions Tracker — a web dashboard that ranks contributor activity across multiple GitLab repositories using a configurable scoring system. Optional Jira integration for bug priority scoring.
+GitLab Contributions Tracker — a web dashboard that displays team-level aggregate metrics and individual contributor activity across multiple GitLab repositories. Optional Jira integration for bug priority data.
 
 ## Running the Project
 
@@ -37,15 +37,15 @@ Output is written to `frontend/data/data.json`.
 
 ### Key frontend abstractions in `app.js`
 
-- **METRICS array**: Each metric is an object with `{id, label, compute(contributor), breakdown(contributor)}`. Adding a new ranking metric means adding an entry here.
-- **Score configuration**: Three layers merged in order — `SCORE_DEFAULTS` (hardcoded) → `SCORE_FILE` (from `score-config.json`) → localStorage overrides. 12 scoring dimensions (mr_open, mr_merged, comment, approval, line_added, line_deleted, priority_*, ai_coauthor).
-- **Timeline bucketing**: `getBucketKey()` / `buildTimelineBuckets()` group MRs by day/week/month/year. Clicking a bar filters the leaderboard to that period.
+- **Team aggregates**: `computeTeamAggregates()` computes 8 team-level metrics (merged MRs, median lead time, median turnaround, AI rate, AI breadth, review coverage, active contributors, lines changed) with trend indicators comparing to the previous period.
+- **Timeline bucketing**: `getBucketKey()` / `buildTimelineBuckets()` group MRs by day/week/month/year. Clicking a bar filters the aggregate metrics and contributor list to that period.
 - **Contributor model**: Built by `buildContributors()` which unifies MR authors, commenters, and approvers into a single object per user.
+- **Contributor list**: Alphabetical, collapsible list with activity mini-badges (no ranking or scoring).
 
 ### Configuration
 
-- `repos.yaml` — list of GitLab repository URLs to track; entries can optionally include `skip_scoring: [lines]` to exclude certain score dimensions per repo.
-- `frontend/score-config.json` — scoring weights used by the frontend.
+- `repos.yaml` — list of GitLab repository URLs to track.
+- Settings: "Show All Teams" toggle and "AI Adoption Threshold" (stored in localStorage).
 
 ## Linting
 

@@ -1,464 +1,23 @@
-/** GitLab Contributions Tracker — Contributor Leaderboard */
+/** GitLab Contributions Tracker — Team Activity Dashboard */
 
 (function () {
   "use strict";
 
-  // --- Metric registry (extensible) ---
-  // Each metric receives a contributor object with:
-  //   { authored_mrs, comments, approvals, username, name, avatar_url }
-
-  // Score weights — loaded from score-config.json, overridden by localStorage
-  const SCORE_DEFAULTS = {
-    mr_open: 1, mr_merged: 10, comment: 3, approval: 2,
-    line_added: 0.05, line_deleted: 0.02,
-    priority_critical: 15, priority_major: 8, priority_normal: 3, priority_minor: 1, priority_undefined: 0,
-    ai_coauthor: 5,
-    merge_sameday: 3,
-    merge_within_week: 2,
-  };
-  let SCORE_FILE = { ...SCORE_DEFAULTS };
-  let SCORE = { ...SCORE_DEFAULTS };
-
-  const SCORE_STORAGE_KEY = "score-config-overrides";
   const SHOW_ALL_TEAMS_KEY = "show-all-teams";
+  const AI_THRESHOLD_KEY = "ai-adoption-threshold";
   let showAllTeams = localStorage.getItem(SHOW_ALL_TEAMS_KEY) === "true";
 
-  async function loadScoreConfig() {
-    try {
-      const resp = await fetch("score-config.json", { cache: "no-store" });
-      if (resp.ok) {
-        SCORE_FILE = { ...SCORE_DEFAULTS, ...await resp.json() };
-      }
-    } catch (_) {
-      // keep defaults
+  // Clean up legacy localStorage keys
+  localStorage.removeItem("score-config-overrides");
+  localStorage.removeItem("badge-config-overrides");
+
+  function getAiAdoptionThreshold() {
+    const stored = localStorage.getItem(AI_THRESHOLD_KEY);
+    if (stored !== null) {
+      const val = parseFloat(stored);
+      return isNaN(val) ? 0.3 : val;
     }
-    // Apply localStorage overrides on top of file values
-    const saved = localStorage.getItem(SCORE_STORAGE_KEY);
-    if (saved) {
-      try {
-        SCORE = { ...SCORE_FILE, ...JSON.parse(saved) };
-      } catch (_) {
-        SCORE = { ...SCORE_FILE };
-      }
-    } else {
-      SCORE = { ...SCORE_FILE };
-    }
-  }
-
-  // Badge configuration — loaded from badge-config.json, overridden by localStorage
-  const BADGE_DEFAULTS = {
-    merge_machine: { enabled: true, percentile: 0.1, threshold: 5 },
-    review_guru: { enabled: true, percentile: 0.1, threshold: 5 },
-    commentator: { enabled: true, percentile: 0.1, threshold: 10 },
-    code_colossus: { enabled: true, percentile: 0.1, threshold: 500 },
-    the_eraser: { enabled: true, threshold: 100 },
-    bug_slayer: { enabled: true, percentile: 0.1, threshold: 1 },
-    perfectionist: { enabled: true, threshold: 5 },
-    team_player: { enabled: true, threshold: 5, ratio: 2 },
-    globe_trotter: { enabled: true, threshold: 3 },
-    ai_jedi: { enabled: true, percentile: 0.1, threshold: 3 },
-    speed_demon: { enabled: true, percentile: 0.1, threshold: 3 },
-  };
-  let BADGE_FILE = { ...BADGE_DEFAULTS };
-  let BADGE = { ...BADGE_DEFAULTS };
-
-  const BADGE_STORAGE_KEY = "badge-config-overrides";
-
-  async function loadBadgeConfig() {
-    try {
-      const resp = await fetch("badge-config.json", { cache: "no-store" });
-      if (resp.ok) {
-        const loaded = await resp.json();
-        BADGE_FILE = { ...BADGE_DEFAULTS };
-        for (const [key, val] of Object.entries(loaded)) {
-          BADGE_FILE[key] = { ...(BADGE_DEFAULTS[key] || {}), ...val };
-        }
-      }
-    } catch (_) {
-      // keep defaults
-    }
-    // Apply localStorage overrides on top of file values
-    const saved = localStorage.getItem(BADGE_STORAGE_KEY);
-    if (saved) {
-      try {
-        BADGE = { ...BADGE_FILE, ...JSON.parse(saved) };
-      } catch (_) {
-        BADGE = { ...BADGE_FILE };
-      }
-    } else {
-      BADGE = { ...BADGE_FILE };
-    }
-  }
-
-  function priorityScoreKey(priority) {
-    if (!priority) return "priority_undefined";
-    const p = priority.toLowerCase();
-    if (p === "critical") return "priority_critical";
-    if (p === "major") return "priority_major";
-    if (p === "normal") return "priority_normal";
-    if (p === "minor") return "priority_minor";
-    return "priority_undefined";
-  }
-
-  function computePriorityPoints(mrs) {
-    let pts = 0;
-    for (const mr of mrs) {
-      if (!mr.jira_key) continue;
-      pts += SCORE[priorityScoreKey(mr.jira_priority)] || 0;
-    }
-    return pts;
-  }
-
-  function computeScore(c) {
-    const merged = c.authored_mrs.filter((mr) => mr.state === "merged").length;
-    const nonMerged = c.authored_mrs.length - merged;
-    const adds = c.authored_mrs.reduce((s, mr) => s + (mr.additions || 0), 0);
-    const dels = c.authored_mrs.reduce((s, mr) => s + (mr.deletions || 0), 0);
-    const prioPoints = computePriorityPoints(c.authored_mrs);
-    const aiCount = c.authored_mrs.filter((mr) => mr.ai_coauthored).length;
-    const sameDayCount = c.authored_mrs.filter((mr) =>
-      mr.state === "merged" && mr.merged_at
-      && (new Date(mr.merged_at) - new Date(mr.created_at)) / 86400000 < 1).length;
-    const withinWeekCount = c.authored_mrs.filter((mr) => {
-      if (mr.state !== "merged" || !mr.merged_at) return false;
-      const d = (new Date(mr.merged_at) - new Date(mr.created_at)) / 86400000;
-      return d >= 1 && d < 7;
-    }).length;
-    return Math.round(
-      (nonMerged * SCORE.mr_open)
-      + (merged * SCORE.mr_merged)
-      + (c.comments * SCORE.comment)
-      + (c.approvals * SCORE.approval)
-      + (adds * SCORE.line_added)
-      + (dels * SCORE.line_deleted)
-      + prioPoints
-      + (aiCount * SCORE.ai_coauthor)
-      + (sameDayCount * SCORE.merge_sameday)
-      + (withinWeekCount * SCORE.merge_within_week)
-    );
-  }
-
-  const METRICS = [
-    {
-      id: "score",
-      label: "Score",
-      compute: computeScore,
-      breakdown: (c) => {
-        const merged = c.authored_mrs.filter((mr) => mr.state === "merged").length;
-        const nonMerged = c.authored_mrs.length - merged;
-        const adds = c.authored_mrs.reduce((s, mr) => s + (mr.additions || 0), 0);
-        const dels = c.authored_mrs.reduce((s, mr) => s + (mr.deletions || 0), 0);
-        const p = [];
-        const mrPts = (nonMerged * SCORE.mr_open) + (merged * SCORE.mr_merged);
-        const commentPts = c.comments * SCORE.comment;
-        const approvalPts = c.approvals * SCORE.approval;
-        const linePts = Math.round((adds * SCORE.line_added) + (dels * SCORE.line_deleted));
-        const prioPts = computePriorityPoints(c.authored_mrs);
-        const aiPts = c.authored_mrs.filter((mr) => mr.ai_coauthored).length * SCORE.ai_coauthor;
-        const sdCount = c.authored_mrs.filter((mr) =>
-          mr.state === "merged" && mr.merged_at
-          && (new Date(mr.merged_at) - new Date(mr.created_at)) / 86400000 < 1).length;
-        const wwCount = c.authored_mrs.filter((mr) => {
-          if (mr.state !== "merged" || !mr.merged_at) return false;
-          const d = (new Date(mr.merged_at) - new Date(mr.created_at)) / 86400000;
-          return d >= 1 && d < 7;
-        }).length;
-        const ctPts = (sdCount * SCORE.merge_sameday) + (wwCount * SCORE.merge_within_week);
-        if (mrPts) p.push({ label: `${mrPts} MRs`, css: "mini-badge-merged" });
-        if (linePts) p.push({ label: `${linePts} lines`, css: "mini-badge-opened" });
-        if (commentPts) p.push({ label: `${commentPts} comments`, css: "mini-badge-opened" });
-        if (approvalPts) p.push({ label: `${approvalPts} approvals`, css: "mini-badge-closed" });
-        if (prioPts) p.push({ label: `${prioPts} priority`, css: "mini-badge-merged" });
-        if (aiPts) p.push({ label: `${aiPts} AI`, css: "mini-badge-merged" });
-        if (ctPts) p.push({ label: `${ctPts} speed`, css: "mini-badge-merged" });
-        return p;
-      },
-    },
-    {
-      id: "total_mrs",
-      label: "Total MRs",
-      compute: (c) => c.authored_mrs.length,
-      breakdown: (c) => {
-        const m = c.authored_mrs.filter((mr) => mr.state === "merged").length;
-        const o = c.authored_mrs.filter((mr) => mr.state === "opened").length;
-        const cl = c.authored_mrs.filter((mr) => mr.state === "closed").length;
-        const p = [];
-        if (m) p.push({ label: `${m} merged`, css: "mini-badge-merged" });
-        if (o) p.push({ label: `${o} open`, css: "mini-badge-opened" });
-        if (cl) p.push({ label: `${cl} closed`, css: "mini-badge-closed" });
-        return p;
-      },
-    },
-    {
-      id: "merged_mrs",
-      label: "Merged MRs",
-      compute: (c) => c.authored_mrs.filter((mr) => mr.state === "merged").length,
-      breakdown: (c) => {
-        const total = c.authored_mrs.length;
-        const m = c.authored_mrs.filter((mr) => mr.state === "merged").length;
-        return [{ label: `${m} of ${total} MRs`, css: "mini-badge-merged" }];
-      },
-    },
-    {
-      id: "open_mrs",
-      label: "Open MRs",
-      compute: (c) => c.authored_mrs.filter((mr) => mr.state === "opened").length,
-      breakdown: (c) => {
-        const total = c.authored_mrs.length;
-        const o = c.authored_mrs.filter((mr) => mr.state === "opened").length;
-        return [{ label: `${o} of ${total} MRs`, css: "mini-badge-opened" }];
-      },
-    },
-    {
-      id: "lines_added",
-      label: "Lines Added",
-      compute: (c) => c.authored_mrs.reduce((s, mr) => s + (mr.additions || 0), 0),
-      breakdown: (c) => {
-        const adds = c.authored_mrs.reduce((s, mr) => s + (mr.additions || 0), 0);
-        const dels = c.authored_mrs.reduce((s, mr) => s + (mr.deletions || 0), 0);
-        const p = [];
-        if (adds) p.push({ label: `+${adds.toLocaleString()}`, css: "mini-badge-merged" });
-        if (dels) p.push({ label: `\u2212${dels.toLocaleString()}`, css: "mini-badge-closed" });
-        return p;
-      },
-    },
-    {
-      id: "lines_changed",
-      label: "Lines Changed",
-      compute: (c) => c.authored_mrs.reduce((s, mr) => s + (mr.additions || 0) + (mr.deletions || 0), 0),
-      breakdown: (c) => {
-        const adds = c.authored_mrs.reduce((s, mr) => s + (mr.additions || 0), 0);
-        const dels = c.authored_mrs.reduce((s, mr) => s + (mr.deletions || 0), 0);
-        const p = [];
-        if (adds) p.push({ label: `+${adds.toLocaleString()}`, css: "mini-badge-merged" });
-        if (dels) p.push({ label: `\u2212${dels.toLocaleString()}`, css: "mini-badge-closed" });
-        return p;
-      },
-    },
-    {
-      id: "comments",
-      label: "Comments",
-      compute: (c) => c.comments,
-      breakdown: (c) => {
-        const onOwn = c.commentsOnOwn;
-        const onOthers = c.comments - onOwn;
-        const p = [];
-        if (onOthers) p.push({ label: `${onOthers} on others`, css: "mini-badge-merged" });
-        if (onOwn) p.push({ label: `${onOwn} on own`, css: "mini-badge-opened" });
-        return p;
-      },
-    },
-    {
-      id: "approvals",
-      label: "Approvals",
-      compute: (c) => c.approvals,
-      breakdown: (c) => {
-        const p = [];
-        if (c.approvals) p.push({ label: `${c.approvals} given`, css: "mini-badge-merged" });
-        return p;
-      },
-    },
-    {
-      id: "bug_priority",
-      label: "Bug Priority",
-      compute: (c) => computePriorityPoints(c.authored_mrs),
-      breakdown: (c) => {
-        const counts = { Critical: 0, Major: 0, Normal: 0, Minor: 0, Undefined: 0 };
-        for (const mr of c.authored_mrs) {
-          if (!mr.jira_key) continue;
-          const key = priorityScoreKey(mr.jira_priority);
-          if (key === "priority_critical") counts.Critical++;
-          else if (key === "priority_major") counts.Major++;
-          else if (key === "priority_normal") counts.Normal++;
-          else if (key === "priority_minor") counts.Minor++;
-          else counts.Undefined++;
-        }
-        const p = [];
-        if (counts.Critical) p.push({ label: `${counts.Critical} critical`, css: "mini-badge-closed" });
-        if (counts.Major) p.push({ label: `${counts.Major} major`, css: "mini-badge-opened" });
-        if (counts.Normal) p.push({ label: `${counts.Normal} normal`, css: "mini-badge-merged" });
-        if (counts.Minor) p.push({ label: `${counts.Minor} minor`, css: "mini-badge-merged" });
-        if (counts.Undefined) p.push({ label: `${counts.Undefined} undefined`, css: "mini-badge-merged" });
-        return p;
-      },
-    },
-    {
-      id: "ai_coauthored",
-      label: "AI Co-Authored",
-      compute: (c) => c.authored_mrs.filter((mr) => mr.ai_coauthored).length,
-      breakdown: (c) => {
-        const total = c.authored_mrs.length;
-        const ai = c.authored_mrs.filter((mr) => mr.ai_coauthored).length;
-        return ai ? [{ label: `${ai} of ${total} MRs`, css: "mini-badge-merged" }] : [];
-      },
-    },
-    {
-      id: "completion_time",
-      label: "Completion Time",
-      compute: (c) => {
-        const merged = c.authored_mrs.filter((mr) => mr.state === "merged" && mr.merged_at);
-        if (!merged.length) return 0;
-        const totalDays = merged.reduce((s, mr) =>
-          s + (new Date(mr.merged_at) - new Date(mr.created_at)) / 86400000, 0);
-        const avg = totalDays / merged.length;
-        return Math.max(0, Math.round((1 / (avg + 1)) * 1000));
-      },
-      breakdown: (c) => {
-        const merged = c.authored_mrs.filter((mr) => mr.state === "merged" && mr.merged_at);
-        if (!merged.length) return [{ label: "No merged MRs", css: "mini-badge-closed" }];
-        const totalDays = merged.reduce((s, mr) =>
-          s + (new Date(mr.merged_at) - new Date(mr.created_at)) / 86400000, 0);
-        const avg = totalDays / merged.length;
-        const sameDay = merged.filter((mr) =>
-          (new Date(mr.merged_at) - new Date(mr.created_at)) / 86400000 < 1).length;
-        const withinWeek = merged.filter((mr) => {
-          const d = (new Date(mr.merged_at) - new Date(mr.created_at)) / 86400000;
-          return d >= 1 && d < 7;
-        }).length;
-        const p = [];
-        if (sameDay) p.push({ label: `${sameDay} same-day`, css: "mini-badge-merged" });
-        if (withinWeek) p.push({ label: `${withinWeek} within week`, css: "mini-badge-opened" });
-        return p;
-      },
-    },
-  ];
-
-  // --- Achievement Badges ---
-  function topPercentileThreshold(contributors, valueFn, pct) {
-    const values = contributors.map(valueFn).filter((v) => v > 0).sort((a, b) => b - a);
-    if (values.length === 0) return Infinity;
-    const idx = Math.max(0, Math.ceil(values.length * pct) - 1);
-    return values[idx];
-  }
-
-  const BADGES = [
-    {
-      id: "merge_machine", label: "Merge Machine", icon: "\u26A1", css: "badge-gold",
-      title: "Top performers by merged MR count",
-      qualify(c, all) {
-        const config = BADGE.merge_machine;
-        if (!config.enabled) return false;
-        const val = c.authored_mrs.filter((mr) => mr.state === "merged").length;
-        return val >= config.threshold && val >= topPercentileThreshold(all, (x) => x.authored_mrs.filter((mr) => mr.state === "merged").length, config.percentile);
-      },
-    },
-    {
-      id: "review_guru", label: "Review Guru", icon: "\uD83D\uDC41", css: "badge-purple",
-      title: "Top performers by approvals given",
-      qualify(c, all) {
-        const config = BADGE.review_guru;
-        if (!config.enabled) return false;
-        return c.approvals >= config.threshold && c.approvals >= topPercentileThreshold(all, (x) => x.approvals, config.percentile);
-      },
-    },
-    {
-      id: "commentator", label: "Commentator", icon: "\uD83D\uDCAC", css: "badge-purple",
-      title: "Top performers by comments on others' MRs",
-      qualify(c, all) {
-        const config = BADGE.commentator;
-        if (!config.enabled) return false;
-        const val = c.comments - (c.commentsOnOwn || 0);
-        return val >= config.threshold && val >= topPercentileThreshold(all, (x) => x.comments - (x.commentsOnOwn || 0), config.percentile);
-      },
-    },
-    {
-      id: "code_colossus", label: "Code Colossus", icon: "\u26F0\uFE0F", css: "badge-gold",
-      title: "Top performers by lines added",
-      qualify(c, all) {
-        const config = BADGE.code_colossus;
-        if (!config.enabled) return false;
-        const val = c.authored_mrs.reduce((s, mr) => s + (mr.additions || 0), 0);
-        return val >= config.threshold && val >= topPercentileThreshold(all, (x) => x.authored_mrs.reduce((s, mr) => s + (mr.additions || 0), 0), config.percentile);
-      },
-    },
-    {
-      id: "the_eraser", label: "The Eraser", icon: "\uD83E\uDDF9", css: "badge-red",
-      title: "More lines deleted than added",
-      qualify(c) {
-        const config = BADGE.the_eraser;
-        if (!config.enabled) return false;
-        const adds = c.authored_mrs.reduce((s, mr) => s + (mr.additions || 0), 0);
-        const dels = c.authored_mrs.reduce((s, mr) => s + (mr.deletions || 0), 0);
-        return dels >= config.threshold && dels > adds;
-      },
-    },
-    {
-      id: "bug_slayer", label: "Bug Slayer", icon: "\uD83D\uDC1B", css: "badge-red",
-      title: "Top performers by bug priority points",
-      qualify(c, all) {
-        const config = BADGE.bug_slayer;
-        if (!config.enabled) return false;
-        const val = computePriorityPoints(c.authored_mrs);
-        const hasBug = c.authored_mrs.some((mr) => mr.jira_key);
-        return val >= config.threshold && hasBug && val >= topPercentileThreshold(all, (x) => computePriorityPoints(x.authored_mrs), config.percentile);
-      },
-    },
-    {
-      id: "perfectionist", label: "Perfectionist", icon: "\u2728", css: "badge-teal",
-      title: "100% merge rate",
-      qualify(c) {
-        const config = BADGE.perfectionist;
-        if (!config.enabled) return false;
-        const total = c.authored_mrs.length;
-        const merged = c.authored_mrs.filter((mr) => mr.state === "merged").length;
-        return total >= config.threshold && merged === total;
-      },
-    },
-    {
-      id: "team_player", label: "Team Player", icon: "\uD83E\uDD1D", css: "badge-teal",
-      title: "Comments on others' MRs > ratio of comments on own",
-      qualify(c) {
-        const config = BADGE.team_player;
-        if (!config.enabled) return false;
-        const onOthers = c.comments - (c.commentsOnOwn || 0);
-        const onOwn = c.commentsOnOwn || 0;
-        return onOthers >= config.threshold && onOthers > config.ratio * onOwn;
-      },
-    },
-    {
-      id: "globe_trotter", label: "Globe Trotter", icon: "\uD83C\uDF10", css: "badge-blue",
-      title: "Contributes to multiple repositories",
-      qualify(c) {
-        const config = BADGE.globe_trotter;
-        if (!config.enabled) return false;
-        const repos = new Set(c.authored_mrs.map((mr) => mr.repoPath || mr.repoName));
-        return repos.size >= config.threshold;
-      },
-    },
-    {
-      id: "ai_jedi", label: "AI Jedi", icon: "\uD83E\uDD16", css: "badge-purple",
-      title: "Top performers by AI co-authored MRs",
-      qualify(c, all) {
-        const config = BADGE.ai_jedi;
-        if (!config.enabled) return false;
-        const val = c.authored_mrs.filter((mr) => mr.ai_coauthored).length;
-        return val >= config.threshold && val >= topPercentileThreshold(all, (x) => x.authored_mrs.filter((mr) => mr.ai_coauthored).length, config.percentile);
-      },
-    },
-    {
-      id: "speed_demon", label: "Speed Demon", icon: "\uD83C\uDFCE\uFE0F", css: "badge-gold",
-      title: "Top performers by average merge speed",
-      qualify(c, all) {
-        const config = BADGE.speed_demon;
-        if (!config.enabled) return false;
-        const merged = c.authored_mrs.filter((mr) => mr.state === "merged" && mr.merged_at);
-        if (merged.length < config.threshold) return false;
-        const avgDays = merged.reduce((s, mr) =>
-          s + (new Date(mr.merged_at) - new Date(mr.created_at)) / 86400000, 0) / merged.length;
-        const speed = 1 / (avgDays + 1);
-        return speed >= topPercentileThreshold(all, (x) => {
-          const m = x.authored_mrs.filter((mr) => mr.state === "merged" && mr.merged_at);
-          if (m.length < config.threshold) return 0;
-          return 1 / (m.reduce((s, mr) => s + (new Date(mr.merged_at) - new Date(mr.created_at)) / 86400000, 0) / m.length + 1);
-        }, config.percentile);
-      },
-    },
-  ];
-
-  function computeBadges(contributors) {
-    for (const c of contributors) {
-      c.badges = BADGES.filter((b) => b.qualify(c, contributors));
-    }
+    return 0.3;
   }
 
   // --- State ---
@@ -472,18 +31,14 @@
   const loadingEl = $("#loading");
   const errorEl = $("#error");
   const appEl = $("#app");
-  const leaderboardBody = $("#leaderboard-body");
   const leaderboardPeriod = $("#leaderboard-period");
   const filterTeam = $("#filter-team");
   const filterRepo = $("#filter-repo");
-  const metricSelect = $("#metric-select");
   const generatedAtEl = $("#generated-at");
   const themeToggle = $("#theme-toggle");
   const themeIcon = $("#theme-icon");
   const timelineCanvas = $("#timeline-chart");
   const granularityToggle = $("#granularity-toggle");
-  const scoreLegendEl = $("#score-legend");
-  const scoreLegendItems = $("#score-legend-items");
   let timelineChart = null;
   const detailOverlay = $("#detail-overlay");
   const detailClose = $("#detail-close");
@@ -493,7 +48,6 @@
   const detailMetrics = $("#detail-metrics");
   const detailRepos = $("#detail-repos");
   const detailMRs = $("#detail-mrs");
-  const detailBadges = $("#detail-badges");
   const detailCollaborators = $("#detail-collaborators");
   const detailChartsEl = $("#detail-charts");
   const detailGranToggle = $("#detail-gran-toggle");
@@ -545,17 +99,6 @@
   themeToggle.addEventListener("click", toggleTheme);
   initTheme();
 
-  // --- Populate metric selector ---
-  function populateMetrics() {
-    for (const metric of METRICS) {
-      const opt = document.createElement("option");
-      opt.value = metric.id;
-      opt.textContent = metric.label;
-      metricSelect.appendChild(opt);
-    }
-  }
-  populateMetrics();
-
   // --- Data Loading ---
   async function loadData() {
     try {
@@ -597,7 +140,6 @@
 
   // --- Filters ---
   function repoDisplayLabel(fullPath) {
-    // Always show parent/repo format (e.g. "base-images/app", "core/architecture-decision-records")
     const parts = fullPath.split("/");
     return parts.slice(-2).join("/");
   }
@@ -620,7 +162,6 @@
       filterTeam.appendChild(opt);
     }
 
-    // Restore previous selection if still valid, otherwise pick first option
     if (currentTeam && teams.includes(currentTeam)) {
       filterTeam.value = currentTeam;
     } else if (!showAllTeams && teams.length > 0) {
@@ -631,7 +172,6 @@
   function populateFilters() {
     const selectedTeam = filterTeam.value;
 
-    // Filter repos by team if one is selected
     let filteredRepos = repositories;
     if (selectedTeam) {
       filteredRepos = repositories.filter((r) => {
@@ -646,7 +186,6 @@
       label: repoDisplayLabel(path)
     })).sort((a, b) => a.label.localeCompare(b.label));
 
-    // Preserve current selection if still valid
     const currentRepo = filterRepo.value;
     filterRepo.length = 1; // keep "All Repositories"
     for (const { path, label } of pathsWithLabels) {
@@ -655,7 +194,6 @@
       opt.textContent = label;
       filterRepo.appendChild(opt);
     }
-    // Restore selection if it's still in the filtered list
     if (paths.includes(currentRepo)) {
       filterRepo.value = currentRepo;
     }
@@ -664,7 +202,6 @@
   function getFilteredMRs() {
     let mrs = allMRs;
 
-    // Filter by team first
     const selectedTeam = filterTeam.value;
     if (selectedTeam) {
       mrs = mrs.filter((mr) => {
@@ -673,7 +210,6 @@
       });
     }
 
-    // Then filter by repo
     const repo = filterRepo.value;
     if (repo) {
       mrs = mrs.filter((mr) => mr.repoPath === repo);
@@ -683,12 +219,11 @@
   }
 
   filterTeam.addEventListener("change", () => {
-    filterRepo.value = ""; // reset repo selection when team changes
+    filterRepo.value = "";
     populateFilters();
     render();
   });
   filterRepo.addEventListener("change", render);
-  metricSelect.addEventListener("change", render);
 
   // --- Contributor Search ---
   const contributorSearch = $("#contributor-search");
@@ -709,7 +244,7 @@
       const name = (contributor.name || '').toLowerCase();
       const username = (contributor.username || '').toLowerCase();
       return name.includes(lowercaseQuery) || username.includes(lowercaseQuery);
-    }).slice(0, 8); // Limit to 8 suggestions
+    }).slice(0, 8);
   }
 
   function renderSearchSuggestions(suggestions) {
@@ -743,8 +278,6 @@
       contributorSearch.value = contributor.name || contributor.username;
       searchSuggestions.hidden = true;
       currentSuggestionIndex = -1;
-
-      // Open the contributor detail modal
       openContributorDetail(username);
     }
   }
@@ -795,7 +328,6 @@
   });
 
   contributorSearch.addEventListener("blur", () => {
-    // Delay hiding to allow click on suggestions
     setTimeout(() => {
       searchSuggestions.hidden = true;
       currentSuggestionIndex = -1;
@@ -810,10 +342,8 @@
     }
   });
 
-  // Update contributors list when data changes
   function updateSearchData() {
     updateAllContributors();
-    // Clear search when data changes
     if (contributorSearch.value) {
       contributorSearch.value = '';
       searchSuggestions.hidden = true;
@@ -830,7 +360,7 @@
     selectedPeriodKey = null;
     if (currentGranularity === "custom") {
       customRangePicker.hidden = false;
-      return; // wait for Apply
+      return;
     }
     customRangePicker.hidden = true;
     render();
@@ -846,15 +376,15 @@
     render();
   });
 
-  // --- Contributor detail click ---
-  leaderboardBody.addEventListener("click", (e) => {
-    const row = e.target.closest(".lb-row");
+  // --- Contributor detail click (delegated on contributor list) ---
+  document.addEventListener("click", (e) => {
+    const row = e.target.closest(".contributor-row");
     if (!row) return;
     const username = row.dataset.username;
     if (username) openContributorDetail(username);
   });
 
-  // --- Time-period filter for leaderboard ---
+  // --- Time-period filter ---
   function currentPeriodKey(gran) {
     if (gran === "custom") return "custom";
     const now = new Date();
@@ -878,10 +408,6 @@
     return mrs.filter((mr) => getBucketKey(mr.created_at, gran) === periodKey);
   }
 
-  /**
-   * Compute the start/end date-key boundaries for a given granularity + periodKey.
-   * Returns {start, end} where both are YYYY-MM-DD strings, or null if no filter.
-   */
   function periodBounds(gran, periodKey) {
     if (!periodKey) return null;
     if (gran === "custom" && periodKey === "custom") {
@@ -892,27 +418,20 @@
       return { start: periodKey, end: periodKey };
     }
     if (gran === "week") {
-      // periodKey is the Monday date
       const mon = new Date(periodKey + "T00:00:00Z");
       const sun = new Date(mon.getTime());
       sun.setUTCDate(sun.getUTCDate() + 6);
       return { start: periodKey, end: toKey(sun) };
     }
     if (gran === "month") {
-      // periodKey is "YYYY-MM"
       const [y, m] = periodKey.split("-").map(Number);
       const first = new Date(Date.UTC(y, m - 1, 1));
-      const last = new Date(Date.UTC(y, m, 0)); // day 0 of next month = last day of this month
+      const last = new Date(Date.UTC(y, m, 0));
       return { start: toKey(first), end: toKey(last) };
     }
-    // year
     return { start: `${periodKey}-01-01`, end: `${periodKey}-12-31` };
   }
 
-  /**
-   * Check whether an ISO timestamp falls within a date range.
-   * bounds is {start, end} with YYYY-MM-DD strings, or null (no filter).
-   */
   function isDateInBounds(iso, bounds) {
     if (!bounds || !iso) return true;
     const d = toKey(utcDate(iso));
@@ -924,7 +443,7 @@
     const e = new Date(endStr + "T00:00:00Z");
     const sLabel = `${SHORT_MONTHS[s.getUTCMonth()]} ${s.getUTCDate()}`;
     const eLabel = `${SHORT_MONTHS[e.getUTCMonth()]} ${e.getUTCDate()}, ${e.getUTCFullYear()}`;
-    return `${sLabel} – ${eLabel}`;
+    return `${sLabel} \u2013 ${eLabel}`;
   }
 
   function periodLabel(gran, periodKey) {
@@ -962,20 +481,12 @@
     return map.get(user.username);
   }
 
-  /**
-   * Build contributor objects from a list of MRs.
-   * @param {Array} mrs - all MRs (team/repo filtered, but NOT period-filtered)
-   * @param {Object|null} bounds - optional {start, end} date range (YYYY-MM-DD)
-   *   to filter MR authorship by created_at, comments by their created_at,
-   *   and approvals by their approved_at. When null, everything is counted.
-   */
   function buildContributors(mrs, bounds) {
     const map = new Map();
 
     for (const mr of mrs) {
       const skip = mr.skipScoring || new Set();
 
-      // MR author — only attribute authorship if MR was created in the period
       if (isDateInBounds(mr.created_at, bounds)) {
         const mrForAuthor = skip.has("lines")
           ? { ...mr, additions: 0, deletions: 0 }
@@ -984,7 +495,6 @@
         author.authored_mrs.push(mrForAuthor);
       }
 
-      // Commenters — filter by each comment's own timestamp
       if (!skip.has("comments")) {
         for (const c of (mr.commenters || [])) {
           if (!isDateInBounds(c.created_at, bounds)) continue;
@@ -997,7 +507,6 @@
         }
       }
 
-      // Approvers — filter by each approval's own timestamp
       if (!skip.has("approvals")) {
         for (const a of (mr.approvers || [])) {
           if (!isDateInBounds(a.approved_at, bounds)) continue;
@@ -1011,72 +520,253 @@
     return [...map.values()];
   }
 
+  // --- Team Aggregate Metrics ---
+  function median(arr) {
+    if (arr.length === 0) return 0;
+    const sorted = [...arr].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+  }
+
+  function computeTeamAggregates(mrs, contributors) {
+    const mergedMRs = mrs.filter((mr) => mr.state === "merged");
+    const mrThroughput = mergedMRs.length;
+
+    // Median lead time (days from created to merged)
+    const leadTimes = mergedMRs
+      .filter((mr) => mr.merged_at)
+      .map((mr) => (new Date(mr.merged_at) - new Date(mr.created_at)) / 86400000);
+    const medianLeadTime = median(leadTimes);
+
+    // Median first-response turnaround (hours from MR creation to first non-author comment)
+    const turnarounds = [];
+    for (const mr of mrs) {
+      const nonAuthorComments = (mr.commenters || [])
+        .filter((c) => c.username !== mr.author.username && c.created_at)
+        .map((c) => new Date(c.created_at))
+        .sort((a, b) => a - b);
+      if (nonAuthorComments.length > 0) {
+        const hours = (nonAuthorComments[0] - new Date(mr.created_at)) / 3600000;
+        turnarounds.push(hours);
+      }
+    }
+    const medianTurnaround = median(turnarounds);
+
+    // AI rate
+    const aiCount = mrs.filter((mr) => mr.ai_coauthored).length;
+    const aiRate = mrs.length > 0 ? aiCount / mrs.length : 0;
+
+    // AI breadth
+    const threshold = getAiAdoptionThreshold();
+    const activeContributorsList = contributors.filter((c) =>
+      c.authored_mrs.length > 0 || c.comments > 0 || c.approvals > 0
+    );
+    const contributorsWithAI = activeContributorsList.filter((c) => {
+      if (c.authored_mrs.length === 0) return false;
+      const aiMRs = c.authored_mrs.filter((mr) => mr.ai_coauthored).length;
+      return (aiMRs / c.authored_mrs.length) >= threshold;
+    });
+    const aiBreadth = activeContributorsList.length > 0
+      ? contributorsWithAI.length / activeContributorsList.length
+      : 0;
+
+    // Review coverage
+    const mergedWithApproval = mergedMRs.filter((mr) => (mr.approvers || []).length > 0).length;
+    const reviewCoverage = mergedMRs.length > 0 ? mergedWithApproval / mergedMRs.length : 0;
+
+    // Active contributors
+    const activeContributors = activeContributorsList.length;
+
+    // Lines changed
+    const linesChanged = mrs.reduce((s, mr) => s + (mr.additions || 0) + (mr.deletions || 0), 0);
+
+    return {
+      mrThroughput,
+      medianLeadTime,
+      medianTurnaround,
+      aiRate,
+      aiBreadth,
+      reviewCoverage,
+      activeContributors,
+      linesChanged,
+    };
+  }
+
+  function computeTrendIndicator(current, previous, invertTrend) {
+    if (previous === 0 && current === 0) return { arrow: "\u2014", label: "no change", css: "trend-flat" };
+    if (previous === 0) return { arrow: "\u2191", label: "new", css: invertTrend ? "trend-down" : "trend-up" };
+    const pct = ((current - previous) / previous) * 100;
+    if (Math.abs(pct) < 1) return { arrow: "\u2014", label: "~0%", css: "trend-flat" };
+    const arrow = pct > 0 ? "\u2191" : "\u2193";
+    const label = `${pct > 0 ? "+" : ""}${Math.round(pct)}%`;
+    let css;
+    if (invertTrend) {
+      css = pct > 0 ? "trend-down" : "trend-up";
+    } else {
+      css = pct > 0 ? "trend-up" : "trend-down";
+    }
+    return { arrow, label, css };
+  }
+
+  function getPreviousPeriodBounds(gran, periodKey) {
+    if (!periodKey) return null;
+    if (gran === "custom") return null;
+    if (gran === "day") {
+      const d = new Date(periodKey + "T00:00:00Z");
+      d.setUTCDate(d.getUTCDate() - 1);
+      const prevKey = toKey(d);
+      return periodBounds("day", prevKey);
+    }
+    if (gran === "week") {
+      const d = new Date(periodKey + "T00:00:00Z");
+      d.setUTCDate(d.getUTCDate() - 7);
+      const prevKey = toKey(d);
+      return periodBounds("week", prevKey);
+    }
+    if (gran === "month") {
+      const [y, m] = periodKey.split("-").map(Number);
+      const prev = new Date(Date.UTC(y, m - 2, 1));
+      const prevKey = `${prev.getUTCFullYear()}-${String(prev.getUTCMonth() + 1).padStart(2, "0")}`;
+      return periodBounds("month", prevKey);
+    }
+    // year
+    const prevYear = String(Number(periodKey) - 1);
+    return periodBounds("year", prevYear);
+  }
+
   // --- Rendering ---
   function render(skipTimeline) {
     const allFiltered = getFilteredMRs();
     const activePeriod = selectedPeriodKey || currentPeriodKey(currentGranularity);
     const periodMRs = filterMRsToPeriod(allFiltered, currentGranularity, activePeriod);
-    const metric = METRICS.find((m) => m.id === metricSelect.value) || METRICS[0];
     const activeBounds = periodBounds(currentGranularity, activePeriod);
     const contributors = buildContributors(allFiltered, activeBounds);
 
-    // Compute metric and breakdown for each contributor
-    for (const c of contributors) {
-      c.score = metric.compute(c);
-      c.breakdownBadges = metric.breakdown(c);
+    // Compute current period aggregates
+    const aggregates = computeTeamAggregates(periodMRs, contributors);
+
+    // Compute previous period aggregates for trend
+    const prevBounds = getPreviousPeriodBounds(currentGranularity, activePeriod);
+    let prevAggregates = null;
+    if (prevBounds) {
+      const prevMRs = allFiltered.filter((mr) => {
+        const d = toKey(utcDate(mr.created_at));
+        return d >= prevBounds.start && d <= prevBounds.end;
+      });
+      const prevContributors = buildContributors(allFiltered, prevBounds);
+      prevAggregates = computeTeamAggregates(prevMRs, prevContributors);
     }
 
-    // Sort descending by score, drop zero-score contributors
-    contributors.sort((a, b) => b.score - a.score);
-    const active = contributors.filter((c) => c.score > 0);
-
-    computeBadges(active);
-
-    leaderboardPeriod.textContent = `Showing contributors for ${periodLabel(currentGranularity, activePeriod)} (${periodMRs.length} MRs)`;
+    leaderboardPeriod.textContent = `Showing activity for ${periodLabel(currentGranularity, activePeriod)} (${periodMRs.length} MRs)`;
 
     if (generatedAt) {
       generatedAtEl.textContent = `Data from ${new Date(generatedAt).toLocaleString()}`;
     }
 
-    renderScoreLegend(metric);
+    renderAggregateCards(aggregates, prevAggregates);
     if (!skipTimeline) renderTimeline(allFiltered);
-    renderLeaderboard(active);
+    renderContributorList(contributors);
 
-    // Update search data with all contributors from filtered MRs
     updateSearchData();
   }
 
-  function scoreLegendEntries() {
-    return [
-      { value: SCORE.mr_merged, label: "per merged MR" },
-      { value: SCORE.mr_open, label: "per opened MR" },
-      { value: SCORE.comment, label: "per comment" },
-      { value: SCORE.approval, label: "per approval" },
-      { value: SCORE.line_added, label: "per line added" },
-      { value: SCORE.line_deleted, label: "per line deleted" },
-      { value: SCORE.priority_critical, label: "per critical bug" },
-      { value: SCORE.priority_major, label: "per major bug" },
-      { value: SCORE.priority_normal, label: "per normal bug" },
-      { value: SCORE.priority_minor, label: "per minor bug" },
-      { value: SCORE.ai_coauthor, label: "per AI co-authored MR" },
-    ].filter((e) => e.value);
-  }
-
-  function renderScoreLegend(metric) {
-    if (metric.id !== "score") {
-      scoreLegendEl.hidden = true;
-      return;
+  // --- Aggregate Cards ---
+  function formatAggregateValue(key, value) {
+    if (key === "medianLeadTime") {
+      if (value === 0) return "0d";
+      if (value < 1) return `${Math.round(value * 24)}h`;
+      return `${value.toFixed(1)}d`;
     }
-    scoreLegendEl.hidden = false;
-    const entries = scoreLegendEntries();
-    scoreLegendItems.innerHTML = entries.map((e) =>
-      `<span class="score-legend-item"><span class="sl-value">${e.value}</span> <span class="sl-label">${e.label}</span></span>`
-    ).join(`<span class="score-legend-item sl-sep">&middot;</span>`);
+    if (key === "medianTurnaround") {
+      if (value === 0) return "0h";
+      if (value < 1) return `${Math.round(value * 60)}m`;
+      if (value >= 24) return `${(value / 24).toFixed(1)}d`;
+      return `${value.toFixed(1)}h`;
+    }
+    if (key === "aiRate" || key === "aiBreadth" || key === "reviewCoverage") {
+      return `${Math.round(value * 100)}%`;
+    }
+    return value.toLocaleString();
   }
 
-  function renderLeaderboard(contributors) {
-    if (contributors.length === 0) {
-      leaderboardBody.innerHTML = `
+  function renderAggregateCards(aggregates, prevAggregates) {
+    const cardsEl = document.getElementById("aggregate-cards");
+    if (!cardsEl) return;
+
+    const metrics = [
+      { key: "mrThroughput", label: "Merged MRs", invert: false, tip: "Total merge requests that were merged during this period" },
+      { key: "medianLeadTime", label: "Median Lead Time", invert: true, tip: "Median time from MR creation to merge \u2014 lower is better" },
+      { key: "medianTurnaround", label: "Median Turnaround", invert: true, tip: "Median time from MR creation to first review comment \u2014 lower is better" },
+      { key: "aiRate", label: "AI Co-Author Rate", invert: false, tip: "Percentage of MRs co-authored with AI tools (e.g. Copilot, Claude)" },
+      { key: "aiBreadth", label: "AI Adoption", invert: false, tip: "Percentage of contributors whose AI co-authored MR rate meets the threshold" },
+      { key: "reviewCoverage", label: "Review Coverage", invert: false, tip: "Percentage of merged MRs that received at least one approval" },
+      { key: "activeContributors", label: "Active Contributors", invert: false, tip: "Number of people with any activity \u2014 MRs, comments, or reviews" },
+      { key: "linesChanged", label: "Lines Changed", invert: false, tip: "Total lines added and deleted across all MRs" },
+    ];
+
+    cardsEl.innerHTML = metrics.map((m) => {
+      const val = aggregates[m.key];
+      const formatted = formatAggregateValue(m.key, val);
+      let trendHtml = "";
+      if (prevAggregates) {
+        const prev = prevAggregates[m.key];
+        const trend = computeTrendIndicator(val, prev, m.invert);
+        trendHtml = `<div class="aggregate-card-trend ${trend.css}">${trend.arrow} ${trend.label}</div>`;
+      }
+      return `<div class="aggregate-card" data-tooltip="${escapeHtml(m.tip)}">
+        <div class="aggregate-card-value">${formatted}</div>
+        ${trendHtml}
+        <div class="aggregate-card-label">${m.label}</div>
+      </div>`;
+    }).join("");
+  }
+
+  // --- Tooltips for [data-tooltip] elements ---
+  const tooltipEl = document.createElement("div");
+  tooltipEl.className = "aggregate-tooltip";
+  document.body.appendChild(tooltipEl);
+  let tooltipTarget = null;
+
+  document.addEventListener("mouseover", (e) => {
+    const el = e.target.closest("[data-tooltip]");
+    if (!el || el === tooltipTarget) return;
+    tooltipTarget = el;
+    tooltipEl.textContent = el.dataset.tooltip;
+    tooltipEl.classList.add("visible");
+    const rect = el.getBoundingClientRect();
+    const tipW = tooltipEl.offsetWidth;
+    const tipH = tooltipEl.offsetHeight;
+    let left = rect.left + rect.width / 2 - tipW / 2;
+    left = Math.max(8, Math.min(left, window.innerWidth - tipW - 8));
+    let top = rect.top - tipH - 8;
+    if (top < 4) top = rect.bottom + 8;
+    tooltipEl.style.left = `${left}px`;
+    tooltipEl.style.top = `${top}px`;
+  });
+
+  document.addEventListener("mouseout", (e) => {
+    const el = e.target.closest("[data-tooltip]");
+    if (!el) return;
+    if (el.contains(e.relatedTarget)) return;
+    tooltipTarget = null;
+    tooltipEl.classList.remove("visible");
+  });
+
+  // --- Contributor List ---
+  function renderContributorList(contributors) {
+    const listBody = document.getElementById("contributor-list-body");
+    const toggleBtn = document.getElementById("contributor-list-toggle");
+    if (!listBody || !toggleBtn) return;
+
+    const active = contributors.filter((c) =>
+      c.authored_mrs.length > 0 || c.comments > 0 || c.approvals > 0
+    );
+    active.sort((a, b) => (a.name || a.username).localeCompare(b.name || b.username));
+
+    toggleBtn.innerHTML = `Individual Contributors (${active.length}) <span class="toggle-icon">&#9654;</span>`;
+
+    if (active.length === 0) {
+      listBody.innerHTML = `
         <div class="empty-state">
           <p>No contributors found</p>
           <small>Try adjusting the filters</small>
@@ -1084,57 +774,64 @@
       return;
     }
 
-    const maxScore = contributors[0].score || 1;
-
-    leaderboardBody.innerHTML = contributors.map((c, i) => {
-      const rank = i + 1;
-      const pct = Math.round((c.score / maxScore) * 100);
-      const rankClass = rank <= 3 ? ` rank-${rank}` : "";
+    listBody.innerHTML = active.map((c) => {
       const avatarHtml = c.avatar_url
         ? `<img class="lb-avatar" src="${escapeHtml(c.avatar_url)}" alt="" loading="lazy">`
-        : `<div class="lb-avatar-placeholder">${escapeHtml(c.name.charAt(0).toUpperCase())}</div>`;
+        : `<div class="lb-avatar-placeholder">${escapeHtml((c.name || c.username).charAt(0).toUpperCase())}</div>`;
+
+      const merged = c.authored_mrs.filter((mr) => mr.state === "merged").length;
+      const openClosed = c.authored_mrs.filter((mr) => mr.state === "opened" || mr.state === "closed").length;
+
+      const aiMRs = c.authored_mrs.filter((mr) => mr.ai_coauthored).length;
+
+      const badges = [];
+      if (merged) badges.push(`<span class="mini-badge mini-badge-merged" data-tooltip="Merge requests that were merged during this period">${merged} merged</span>`);
+      if (openClosed) badges.push(`<span class="mini-badge mini-badge-opened" data-tooltip="Merge requests currently open or closed without merging">${openClosed} open/closed</span>`);
+      if (c.approvals) badges.push(`<span class="mini-badge mini-badge-merged" data-tooltip="Code reviews (approvals) given on other contributors\u2019 MRs">${c.approvals} reviews</span>`);
+      if (c.comments) badges.push(`<span class="mini-badge mini-badge-opened" data-tooltip="Comments left on merge requests (including their own)">${c.comments} comments</span>`);
+      if (aiMRs) badges.push(`<span class="mini-badge mini-badge-ai" data-tooltip="Merge requests co-authored with AI tools (e.g. Copilot, Claude)">${aiMRs} AI</span>`);
 
       return `
-        <div class="lb-row" data-username="${escapeHtml(c.username)}">
-          <span class="lb-rank${rankClass}">${rank}</span>
+        <div class="contributor-row" data-username="${escapeHtml(c.username)}">
           <div class="lb-contributor">
             ${avatarHtml}
             <div class="lb-name-block">
-              <span class="lb-name">${escapeHtml(c.name)}</span>
+              <span class="lb-name">${escapeHtml(c.name || c.username)}</span>
               <span class="lb-username">@${escapeHtml(c.username)}</span>
-              ${c.badges && c.badges.length ? `<div class="lb-badges">${c.badges.map((b) => `<span class="lb-badge ${b.css}" title="${escapeHtml(b.title)}">${b.icon} ${escapeHtml(b.label)}</span>`).join("")}</div>` : ""}
             </div>
           </div>
-          <div class="lb-bar-cell" title="${pct}% of top contributor">
-            <div class="lb-bar-track">
-              <div class="lb-bar-fill" style="width: ${pct}%"></div>
-            </div>
-            <span class="lb-bar-pct">${pct}%</span>
+          <div class="contributor-activity">
+            ${badges.join("")}
           </div>
-          <div class="lb-breakdown">
-            ${c.breakdownBadges.map((b) => `<span class="mini-badge ${b.css}">${b.label}</span>`).join("")}
-          </div>
-          <span class="lb-value">${c.score}</span>
         </div>`;
     }).join("");
   }
 
+  // --- Contributor list toggle ---
+  document.addEventListener("click", (e) => {
+    const toggleBtn = e.target.closest("#contributor-list-toggle");
+    if (!toggleBtn) return;
+    const listBody = document.getElementById("contributor-list-body");
+    if (!listBody) return;
+    const expanded = toggleBtn.getAttribute("aria-expanded") === "true";
+    toggleBtn.setAttribute("aria-expanded", String(!expanded));
+    listBody.hidden = expanded;
+  });
+
   // --- Timeline ---
 
-  // All date helpers use UTC to stay consistent with GitLab timestamps.
   function utcDate(iso) {
     const d = new Date(iso);
     return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
   }
 
   function toKey(d) {
-    // d is already a UTC-midnight Date
-    return d.toISOString().slice(0, 10); // "YYYY-MM-DD"
+    return d.toISOString().slice(0, 10);
   }
 
   function mondayOf(d) {
     const tmp = new Date(d.getTime());
-    const dow = tmp.getUTCDay() || 7; // Sun=0 -> 7
+    const dow = tmp.getUTCDay() || 7;
     tmp.setUTCDate(tmp.getUTCDate() - dow + 1);
     return tmp;
   }
@@ -1143,12 +840,11 @@
     const d = utcDate(iso);
     if (gran === "day") return toKey(d);
     if (gran === "week") return toKey(mondayOf(d));
-    if (gran === "month") return toKey(d).slice(0, 7); // "YYYY-MM"
-    return String(d.getUTCFullYear()); // "YYYY"
+    if (gran === "month") return toKey(d).slice(0, 7);
+    return String(d.getUTCFullYear());
   }
 
   function advanceBucket(key, gran) {
-    // Given a bucket key, return the next bucket key
     if (gran === "day") {
       const d = new Date(key + "T00:00:00Z");
       d.setUTCDate(d.getUTCDate() + 1);
@@ -1161,10 +857,9 @@
     }
     if (gran === "month") {
       const [y, m] = key.split("-").map(Number);
-      const next = new Date(Date.UTC(y, m, 1)); // month is 0-indexed, so m (already 1-based) = next month
+      const next = new Date(Date.UTC(y, m, 1));
       return `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, "0")}`;
     }
-    // year
     return String(Number(key) + 1);
   }
 
@@ -1182,9 +877,8 @@
       sun.setUTCDate(sun.getUTCDate() + 6);
       const mLabel = `${SHORT_MONTHS[mon.getUTCMonth()]} ${mon.getUTCDate()}`;
       const sLabel = `${SHORT_MONTHS[sun.getUTCMonth()]} ${sun.getUTCDate()}`;
-      return `${mLabel} – ${sLabel}`;
+      return `${mLabel} \u2013 ${sLabel}`;
     }
-    // day
     const d = new Date(key + "T00:00:00Z");
     return `${SHORT_MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`;
   }
@@ -1194,7 +888,6 @@
       return { keys: [], labels: [], merged: [], opened: [], closed: [] };
     }
 
-    // Bucket the MRs
     const buckets = new Map();
     for (const mr of mrs) {
       const key = getBucketKey(mr.created_at, gran);
@@ -1207,7 +900,6 @@
       else if (mr.state === "closed") b.closed++;
     }
 
-    // Find min/max bucket keys, constrained by filterStart/filterEnd if provided
     const keys = [...buckets.keys()].sort();
     let minKey = keys[0];
     let maxKey = keys[keys.length - 1];
@@ -1219,7 +911,6 @@
       maxKey = getBucketKey(filterEnd + "T00:00:00Z", gran);
     }
 
-    // Fill in all intermediate empty buckets
     const filled = [];
     let cur = minKey;
     while (cur <= maxKey) {
@@ -1269,7 +960,7 @@
         filterStart = customRangeStart;
         filterEnd = customRangeEnd;
       } else {
-        gran = "month"; // fallback until user picks dates
+        gran = "month";
       }
     }
 
@@ -1278,7 +969,6 @@
     const colors = getChartColors();
     const activePeriod = (currentGranularity === "custom") ? null : (selectedPeriodKey || currentPeriodKey(currentGranularity));
 
-    // Highlight the selected bar, dim others
     function barColors(baseColor, keys) {
       if (!activePeriod) return baseColor;
       return keys.map((k) => k === activePeriod ? baseColor : baseColor + "40");
@@ -1324,7 +1014,6 @@
           if (!elements.length || currentGranularity === "custom") return;
           const idx = elements[0].index;
           const clickedKey = timelineBucketKeys[idx];
-          // Toggle: click same bar again to deselect
           selectedPeriodKey = selectedPeriodKey === clickedKey ? null : clickedKey;
           render();
         },
@@ -1390,34 +1079,21 @@
       // Title
       doc.setFontSize(18);
       doc.setFont("helvetica", "bold");
-      doc.text("GitLab Contributions Report", 14, y);
+      doc.text("Team Activity Report", 14, y);
       y += 8;
 
       // Metadata line
       doc.setFontSize(9);
       doc.setFont("helvetica", "normal");
       doc.setTextColor(100);
-      const metricLabel = metricSelect.options[metricSelect.selectedIndex].text;
+      const teamLabel = filterTeam.value || "All Teams";
       const repoLabel = filterRepo.value || "All Repositories";
       const activePeriod = selectedPeriodKey || currentPeriodKey(currentGranularity);
       const period = periodLabel(currentGranularity, activePeriod);
       const genDate = generatedAt ? new Date(generatedAt).toLocaleString() : "N/A";
-      doc.text(`Ranked by: ${metricLabel}  |  Repository: ${repoLabel}  |  Period: ${period}  |  Data from: ${genDate}`, 14, y);
+      doc.text(`Team: ${teamLabel}  |  Repository: ${repoLabel}  |  Period: ${period}  |  Data from: ${genDate}`, 14, y);
       doc.setTextColor(0);
       y += 6;
-
-      // Score legend (only when metric is Score)
-      const currentMetric = METRICS.find((m) => m.id === metricSelect.value) || METRICS[0];
-      if (currentMetric.id === "score") {
-        const entries = scoreLegendEntries();
-        doc.setFontSize(8);
-        doc.setFont("helvetica", "italic");
-        doc.setTextColor(120);
-        const legendText = "Scoring: " + entries.map((e) => `${e.value} ${e.label}`).join("  |  ");
-        doc.text(legendText, 14, y);
-        doc.setTextColor(0);
-        y += 5;
-      }
 
       // Separator
       doc.setDrawColor(200);
@@ -1433,29 +1109,55 @@
         y += chartH + 8;
       }
 
-      // Build table data from current leaderboard
+      // Aggregate metrics table
       const allFiltered = getFilteredMRs();
-      const metric = METRICS.find((m) => m.id === metricSelect.value) || METRICS[0];
-      const contributors = buildContributors(allFiltered, periodBounds(currentGranularity, activePeriod));
-      for (const c of contributors) {
-        c.score = metric.compute(c);
-        c.breakdownBadges = metric.breakdown(c);
-      }
-      contributors.sort((a, b) => b.score - a.score);
-      const active = contributors.filter((c) => c.score > 0);
+      const periodMRs = filterMRsToPeriod(allFiltered, currentGranularity, activePeriod);
+      const activeBounds = periodBounds(currentGranularity, activePeriod);
+      const contributors = buildContributors(allFiltered, activeBounds);
+      const aggregates = computeTeamAggregates(periodMRs, contributors);
 
-      const maxScore = active.length ? active[0].score : 1;
-      const tableHead = [["#", "Contributor", "Username", "Relative", "Breakdown", metricLabel]];
-      const tableBody = active.map((c, i) => {
-        const pct = Math.round((c.score / maxScore) * 100);
-        const breakdown = c.breakdownBadges.map((b) => b.label).join(", ");
+      const metricsData = [
+        ["Merged MRs", aggregates.mrThroughput.toLocaleString()],
+        ["Median Lead Time", formatAggregateValue("medianLeadTime", aggregates.medianLeadTime)],
+        ["Median Turnaround", formatAggregateValue("medianTurnaround", aggregates.medianTurnaround)],
+        ["AI Co-Author Rate", formatAggregateValue("aiRate", aggregates.aiRate)],
+        ["AI Adoption", formatAggregateValue("aiBreadth", aggregates.aiBreadth)],
+        ["Review Coverage", formatAggregateValue("reviewCoverage", aggregates.reviewCoverage)],
+        ["Active Contributors", aggregates.activeContributors.toLocaleString()],
+        ["Lines Changed", aggregates.linesChanged.toLocaleString()],
+      ];
+
+      doc.autoTable({
+        startY: y,
+        head: [["Metric", "Value"]],
+        body: metricsData,
+        margin: { left: 14, right: pageW / 2 },
+        styles: { fontSize: 9, cellPadding: 3 },
+        headStyles: { fillColor: [99, 102, 241], textColor: 255, fontStyle: "bold" },
+        columnStyles: {
+          1: { halign: "right", fontStyle: "bold" }
+        },
+        alternateRowStyles: { fillColor: [245, 245, 250] },
+      });
+
+      y = doc.lastAutoTable.finalY + 8;
+
+      // Contributor list table
+      const active = contributors.filter((c) =>
+        c.authored_mrs.length > 0 || c.comments > 0 || c.approvals > 0
+      );
+      active.sort((a, b) => (a.name || a.username).localeCompare(b.name || b.username));
+
+      const tableHead = [["Contributor", "Username", "MRs", "Merged", "Reviews", "Comments"]];
+      const tableBody = active.map((c) => {
+        const merged = c.authored_mrs.filter((mr) => mr.state === "merged").length;
         return [
-          i + 1,
-          c.name,
+          c.name || c.username,
           `@${c.username}`,
-          `${pct}%`,
-          breakdown,
-          c.score.toLocaleString(),
+          c.authored_mrs.length.toString(),
+          merged.toString(),
+          c.approvals.toString(),
+          c.comments.toString(),
         ];
       });
 
@@ -1467,9 +1169,10 @@
         styles: { fontSize: 8, cellPadding: 2.5 },
         headStyles: { fillColor: [99, 102, 241], textColor: 255, fontStyle: "bold" },
         columnStyles: {
-          0: { halign: "center", cellWidth: 10 },
-          3: { halign: "center", cellWidth: 20 },
-          5: { halign: "right", cellWidth: 22, fontStyle: "bold" },
+          2: { halign: "center", cellWidth: 15 },
+          3: { halign: "center", cellWidth: 15 },
+          4: { halign: "center", cellWidth: 18 },
+          5: { halign: "center", cellWidth: 20 },
         },
         alternateRowStyles: { fillColor: [245, 245, 250] },
       });
@@ -1478,9 +1181,9 @@
       const finalY = doc.lastAutoTable.finalY + 8;
       doc.setFontSize(7);
       doc.setTextColor(150);
-      doc.text(`Generated on ${new Date().toLocaleString()} — GitLab Contributions Tracker`, 14, finalY);
+      doc.text(`Generated on ${new Date().toLocaleString()} \u2014 GitLab Contributions Tracker`, 14, finalY);
 
-      const filename = `contributions-${metricLabel.toLowerCase().replace(/\s+/g, "-")}-${new Date().toISOString().slice(0, 10)}.pdf`;
+      const filename = `team-activity-${new Date().toISOString().slice(0, 10)}.pdf`;
       doc.save(filename);
     } finally {
       exportBtn.disabled = false;
@@ -1502,35 +1205,22 @@
       const pageH = doc.internal.pageSize.getHeight();
       let y = 15;
 
-      // Get period-filtered contributor data (matches what the modal shows)
       const allMRsFiltered = getFilteredMRs();
       const periodContributors = buildContributors(allMRsFiltered, getDetailPeriodBounds(detailGranularity, detailPeriodOffset));
       const contributor = periodContributors.find((c) => c.username === detailCurrentUsername);
 
-      // Also get all-time data for badges and header name/avatar
-      const allContributors = buildContributors(allMRsFiltered);
-      const allTimeContributor = allContributors.find((c) => c.username === detailCurrentUsername);
+      const allContributorsList = buildContributors(allMRsFiltered);
+      const allTimeContributor = allContributorsList.find((c) => c.username === detailCurrentUsername);
       if (!allTimeContributor) return;
 
-      // Use period contributor for metrics/repos, fall back if no activity in period
       const periodC = contributor || { username: detailCurrentUsername, name: allTimeContributor.name, authored_mrs: [], comments: 0, commentsOnOwn: 0, approvals: 0 };
 
-      // Calculate metrics for the period contributor
-      for (const metric of METRICS) {
-        periodC[`metric_${metric.id}`] = metric.compute(periodC);
-      }
-
-      // Compute badges from period-filtered data (matches what the modal shows)
-      computeBadges(periodContributors);
-      const badges = (contributor && contributor.badges) || [];
-
-      // Period label
       const pdfPeriodLabel = getDetailPeriodLabel(detailGranularity, detailPeriodOffset);
 
       // Title
       doc.setFontSize(18);
       doc.setFont("helvetica", "bold");
-      doc.text("Individual Contributor Report", 14, y);
+      doc.text("Individual Activity Report", 14, y);
       y += 8;
 
       // Contributor name and username
@@ -1538,16 +1228,6 @@
       doc.setFont("helvetica", "bold");
       doc.text(`${allTimeContributor.name} (@${allTimeContributor.username})`, 14, y);
       y += 6;
-
-      // Badges — plain text, comma-separated, no icons
-      if (badges.length > 0) {
-        doc.setFontSize(9);
-        doc.setFont("helvetica", "normal");
-        doc.setTextColor(80);
-        doc.text("Badges: " + badges.map((b) => b.label).join(", "), 14, y);
-        doc.setTextColor(0);
-        y += 5;
-      }
 
       // Metadata line
       doc.setFontSize(9);
@@ -1567,19 +1247,32 @@
       // Metrics summary
       doc.setFontSize(12);
       doc.setFont("helvetica", "bold");
-      doc.text("Metrics Summary", 14, y);
+      doc.text("Activity Summary", 14, y);
       y += 6;
 
-      // Create metrics table
-      const metricsData = METRICS.map(metric => [
-        metric.label,
-        periodC[`metric_${metric.id}`].toLocaleString()
-      ]);
+      const mergedCount = periodC.authored_mrs.filter((mr) => mr.state === "merged").length;
+      const mergedMRsForLead = periodC.authored_mrs.filter((mr) => mr.state === "merged" && mr.merged_at);
+      let avgLeadTime = 0;
+      if (mergedMRsForLead.length > 0) {
+        avgLeadTime = mergedMRsForLead.reduce((s, mr) =>
+          s + (new Date(mr.merged_at) - new Date(mr.created_at)) / 86400000, 0) / mergedMRsForLead.length;
+      }
+      const aiMRCount = periodC.authored_mrs.filter((mr) => mr.ai_coauthored).length;
+      const aiPct = periodC.authored_mrs.length > 0 ? Math.round((aiMRCount / periodC.authored_mrs.length) * 100) : 0;
+
+      const activityMetrics = [
+        ["Total MRs", periodC.authored_mrs.length.toLocaleString()],
+        ["Merged MRs", mergedCount.toLocaleString()],
+        ["Comments", periodC.comments.toLocaleString()],
+        ["Reviews Given", periodC.approvals.toLocaleString()],
+        ["Avg Lead Time", avgLeadTime > 0 ? `${avgLeadTime.toFixed(1)} days` : "N/A"],
+        ["AI Co-Authored", `${aiPct}%`],
+      ];
 
       doc.autoTable({
         startY: y,
         head: [["Metric", "Value"]],
-        body: metricsData,
+        body: activityMetrics,
         margin: { left: 14, right: 14 },
         styles: { fontSize: 9, cellPadding: 3 },
         headStyles: { fillColor: [99, 102, 241], textColor: 255, fontStyle: "bold" },
@@ -1602,7 +1295,6 @@
           const chart = detailCharts[i];
           const isLeft = i % chartsPerRow === 0;
 
-          // New row: check page space
           if (isLeft) {
             if (y + chartH + 10 > pageH - 20) {
               doc.addPage();
@@ -1616,7 +1308,6 @@
             }
           }
 
-          // Chart title
           const titleEl = chart.canvas.closest(".detail-chart-card")?.querySelector(".detail-chart-card-title");
           const title = titleEl ? titleEl.textContent : "";
           doc.setFontSize(8);
@@ -1626,11 +1317,9 @@
           doc.text(title, xPos, y);
           doc.setTextColor(0);
 
-          // Chart image
           const chartImg = chart.canvas.toDataURL("image/png", 1.0);
           doc.addImage(chartImg, "PNG", xPos, y + 1, halfW, chartH);
 
-          // Advance y after the right chart (or last chart if odd)
           if (!isLeft || i === detailCharts.length - 1) {
             y += chartH + 8;
           }
@@ -1690,7 +1379,7 @@
         y = doc.lastAutoTable.finalY + 8;
       }
 
-      // Recent merge requests (from the period)
+      // Recent merge requests
       if (y > pageH - 40) {
         doc.addPage();
         y = 15;
@@ -1743,7 +1432,7 @@
       }
       doc.setFontSize(7);
       doc.setTextColor(150);
-      doc.text(`Generated on ${new Date().toLocaleString()} — GitLab Contributions Tracker`, 14, y);
+      doc.text(`Generated on ${new Date().toLocaleString()} \u2014 GitLab Contributions Tracker`, 14, y);
 
       const filename = `contributor-${allTimeContributor.username}-${new Date().toISOString().slice(0, 10)}.pdf`;
       doc.save(filename);
@@ -1757,51 +1446,12 @@
   });
 
   // --- Settings Modal ---
-  const SCORE_LABELS = {
-    mr_merged: "Merged MR",
-    mr_open: "Opened MR (not merged)",
-    comment: "Comment",
-    approval: "Approval",
-    line_added: "Line added",
-    line_deleted: "Line deleted",
-    priority_critical: "Critical bug fix",
-    priority_major: "Major bug fix",
-    priority_normal: "Normal bug fix",
-    priority_minor: "Minor bug fix",
-    priority_undefined: "Undefined priority",
-    ai_coauthor: "AI co-authored MR",
-    merge_sameday: "MR merged same day",
-    merge_within_week: "MR merged within a week",
-  };
-
-  const BADGE_LABELS = {
-    merge_machine: "⚡ Merge Machine",
-    review_guru: "👁 Review Guru",
-    commentator: "💬 Commentator",
-    code_colossus: "⛰ Code Colossus",
-    the_eraser: "🧹 The Eraser",
-    bug_slayer: "🐛 Bug Slayer",
-    perfectionist: "✨ Perfectionist",
-    team_player: "🤝 Team Player",
-    globe_trotter: "🌍 Globe Trotter",
-    ai_jedi: "🤖 AI Jedi",
-    speed_demon: "🏎️ Speed Demon",
-  };
-
   const settingsBtn = $("#btn-settings");
   const settingsOverlay = $("#settings-overlay");
   const settingsBody = $("#settings-body");
   const settingsClose = $("#settings-close");
   const settingsSave = $("#settings-save");
   const settingsReset = $("#settings-reset");
-
-  function hasCustomOverrides() {
-    return localStorage.getItem(SCORE_STORAGE_KEY) !== null;
-  }
-
-  function hasCustomBadgeOverrides() {
-    return localStorage.getItem(BADGE_STORAGE_KEY) !== null;
-  }
 
   function openSettings() {
     settingsBody.innerHTML = "";
@@ -1819,73 +1469,14 @@
       `<input class="setting-checkbox" id="setting-show-all-teams" type="checkbox" ${showAllTeams ? 'checked' : ''}>`;
     settingsBody.appendChild(allTeamsRow);
 
-    // Score settings section
-    const scoreHeader = document.createElement("h3");
-    scoreHeader.textContent = "Scoring Weights";
-    scoreHeader.style.cssText = "margin: 0 0 0.75rem; color: var(--accent); font-size: 0.9rem; font-weight: 700;";
-    settingsBody.appendChild(scoreHeader);
-
-    const scoreKeys = Object.keys(SCORE_LABELS);
-    for (const key of scoreKeys) {
-      const row = document.createElement("div");
-      row.className = "setting-row";
-      const val = SCORE[key] ?? SCORE_FILE[key] ?? 0;
-      const isCustom = hasCustomOverrides() && SCORE[key] !== SCORE_FILE[key];
-      row.innerHTML =
-        `<label class="setting-label" for="sc-${key}">${SCORE_LABELS[key]}${isCustom ? '<span class="modal-custom-badge">custom</span>' : ''}</label>` +
-        `<input class="setting-input" id="sc-${key}" type="number" step="any" data-key="${key}" value="${val}">`;
-      settingsBody.appendChild(row);
-    }
-
-    // Badge settings section
-    const badgeHeader = document.createElement("h3");
-    badgeHeader.textContent = "Badge Configuration";
-    badgeHeader.style.cssText = "margin: 1.5rem 0 0.75rem; color: var(--accent); font-size: 0.9rem; font-weight: 700;";
-    settingsBody.appendChild(badgeHeader);
-
-    const badgeKeys = Object.keys(BADGE_LABELS);
-    for (const key of badgeKeys) {
-      const config = BADGE[key] ?? BADGE_FILE[key] ?? {};
-      const isCustom = hasCustomBadgeOverrides() && JSON.stringify(BADGE[key]) !== JSON.stringify(BADGE_FILE[key]);
-
-      // Enabled checkbox
-      const enabledRow = document.createElement("div");
-      enabledRow.className = "setting-row";
-      enabledRow.innerHTML =
-        `<label class="setting-label" for="bg-${key}-enabled">${BADGE_LABELS[key]} Enabled${isCustom ? '<span class="modal-custom-badge">custom</span>' : ''}</label>` +
-        `<input class="setting-checkbox" id="bg-${key}-enabled" type="checkbox" data-badge="${key}" data-prop="enabled" ${config.enabled ? 'checked' : ''}>`;
-      settingsBody.appendChild(enabledRow);
-
-      // Threshold input
-      if (config.threshold !== undefined) {
-        const thresholdRow = document.createElement("div");
-        thresholdRow.className = "setting-row";
-        thresholdRow.innerHTML =
-          `<label class="setting-label" for="bg-${key}-threshold">  └ Threshold</label>` +
-          `<input class="setting-input" id="bg-${key}-threshold" type="number" step="any" data-badge="${key}" data-prop="threshold" value="${config.threshold}">`;
-        settingsBody.appendChild(thresholdRow);
-      }
-
-      // Percentile input
-      if (config.percentile !== undefined) {
-        const percentileRow = document.createElement("div");
-        percentileRow.className = "setting-row";
-        percentileRow.innerHTML =
-          `<label class="setting-label" for="bg-${key}-percentile">  └ Top Percentile (0.1 = 10%)</label>` +
-          `<input class="setting-input" id="bg-${key}-percentile" type="number" step="0.01" min="0" max="1" data-badge="${key}" data-prop="percentile" value="${config.percentile}">`;
-        settingsBody.appendChild(percentileRow);
-      }
-
-      // Ratio input
-      if (config.ratio !== undefined) {
-        const ratioRow = document.createElement("div");
-        ratioRow.className = "setting-row";
-        ratioRow.innerHTML =
-          `<label class="setting-label" for="bg-${key}-ratio">  └ Ratio</label>` +
-          `<input class="setting-input" id="bg-${key}-ratio" type="number" step="0.1" data-badge="${key}" data-prop="ratio" value="${config.ratio}">`;
-        settingsBody.appendChild(ratioRow);
-      }
-    }
+    // AI Adoption Threshold
+    const aiThresholdRow = document.createElement("div");
+    aiThresholdRow.className = "setting-row";
+    const currentThreshold = getAiAdoptionThreshold();
+    aiThresholdRow.innerHTML =
+      `<label class="setting-label" for="setting-ai-threshold">AI Adoption Threshold (0\u20131)</label>` +
+      `<input class="setting-input" id="setting-ai-threshold" type="number" step="0.05" min="0" max="1" value="${currentThreshold}">`;
+    settingsBody.appendChild(aiThresholdRow);
 
     settingsOverlay.hidden = false;
   }
@@ -1895,49 +1486,27 @@
   }
 
   function saveSettings() {
-    // Save general settings
     const allTeamsCheckbox = settingsBody.querySelector("#setting-show-all-teams");
     showAllTeams = allTeamsCheckbox ? allTeamsCheckbox.checked : false;
     localStorage.setItem(SHOW_ALL_TEAMS_KEY, String(showAllTeams));
     populateTeams();
     populateFilters();
 
-    // Save score settings
-    const scoreInputs = settingsBody.querySelectorAll(".setting-input[data-key]");
-    const scoreOverrides = {};
-    for (const input of scoreInputs) {
-      scoreOverrides[input.dataset.key] = parseFloat(input.value) || 0;
-    }
-    localStorage.setItem(SCORE_STORAGE_KEY, JSON.stringify(scoreOverrides));
-    SCORE = { ...SCORE_FILE, ...scoreOverrides };
-
-    // Save badge settings
-    const badgeOverrides = { ...BADGE_FILE };
-    const badgeInputs = settingsBody.querySelectorAll("[data-badge]");
-    for (const input of badgeInputs) {
-      const badgeKey = input.dataset.badge;
-      const prop = input.dataset.prop;
-      if (!badgeOverrides[badgeKey]) badgeOverrides[badgeKey] = {};
-
-      if (input.type === "checkbox") {
-        badgeOverrides[badgeKey][prop] = input.checked;
-      } else {
-        badgeOverrides[badgeKey][prop] = parseFloat(input.value) || 0;
+    const aiThresholdInput = settingsBody.querySelector("#setting-ai-threshold");
+    if (aiThresholdInput) {
+      const val = parseFloat(aiThresholdInput.value);
+      if (!isNaN(val) && val >= 0 && val <= 1) {
+        localStorage.setItem(AI_THRESHOLD_KEY, String(val));
       }
     }
-    localStorage.setItem(BADGE_STORAGE_KEY, JSON.stringify(badgeOverrides));
-    BADGE = badgeOverrides;
 
     closeSettings();
     render();
   }
 
   function resetSettings() {
-    localStorage.removeItem(SCORE_STORAGE_KEY);
-    localStorage.removeItem(BADGE_STORAGE_KEY);
     localStorage.removeItem(SHOW_ALL_TEAMS_KEY);
-    SCORE = { ...SCORE_FILE };
-    BADGE = { ...BADGE_FILE };
+    localStorage.removeItem(AI_THRESHOLD_KEY);
     showAllTeams = false;
     populateTeams();
     populateFilters();
@@ -1956,14 +1525,13 @@
   // --- Collaboration Map ---
   function buildCollaborationMap(username, mrs, contributors) {
     const collabMap = new Map();
-    // Build a lookup of known contributor names (lowercase) → username
     const nameToUsername = new Map();
     for (const c of contributors) {
       if (c.name) nameToUsername.set(c.name.toLowerCase(), c.username);
     }
 
     function ensureCollab(key, name, avatarUrl) {
-      if (key === username) return null; // skip self
+      if (key === username) return null;
       if (!collabMap.has(key)) {
         collabMap.set(key, {
           username: key,
@@ -1982,15 +1550,12 @@
     for (const mr of mrs) {
       const isAuthor = mr.author.username === username;
 
-      // Reviews (approvals)
       if (isAuthor) {
-        // Others who approved this user's MR → reviews received
         for (const a of (mr.approvers || [])) {
           const entry = ensureCollab(a.username, a.name, a.avatar_url);
           if (entry) entry.reviews_received++;
         }
       } else {
-        // This user approved someone else's MR → reviews given to that author
         for (const a of (mr.approvers || [])) {
           if (a.username === username) {
             const entry = ensureCollab(mr.author.username, mr.author.name, mr.author.avatar_url);
@@ -1999,16 +1564,13 @@
         }
       }
 
-      // Comments (each entry is a single comment)
       if (isAuthor) {
-        // Others who commented on this user's MR → comments received
         for (const c of (mr.commenters || [])) {
           if (c.username === username) continue;
           const entry = ensureCollab(c.username, c.name, c.avatar_url);
           if (entry) entry.comments_received += 1;
         }
       } else {
-        // This user commented on someone else's MR → comments given to that author
         for (const c of (mr.commenters || [])) {
           if (c.username === username) {
             const entry = ensureCollab(mr.author.username, mr.author.name, mr.author.avatar_url);
@@ -2017,7 +1579,6 @@
         }
       }
 
-      // Co-authors
       const coAuthors = mr.co_authors || [];
       if (isAuthor) {
         for (const ca of coAuthors) {
@@ -2033,7 +1594,6 @@
           }
         }
       } else {
-        // Check if the current user is listed as a co-author on someone else's MR
         for (const ca of coAuthors) {
           const matchedUsername = nameToUsername.get(ca.name.toLowerCase());
           if (matchedUsername === username) {
@@ -2044,7 +1604,6 @@
       }
     }
 
-    // Sort by total collaboration score
     const result = [...collabMap.values()]
       .map((c) => ({
         ...c,
@@ -2141,7 +1700,7 @@
       targetSunday.setUTCDate(targetSunday.getUTCDate() + 6);
       const mLabel = `${SHORT_MONTHS[targetMonday.getUTCMonth()]} ${targetMonday.getUTCDate()}`;
       const sLabel = `${SHORT_MONTHS[targetSunday.getUTCMonth()]} ${targetSunday.getUTCDate()}`;
-      return `${mLabel} – ${sLabel}, ${targetMonday.getUTCFullYear()}`;
+      return `${mLabel} \u2013 ${sLabel}, ${targetMonday.getUTCFullYear()}`;
     }
     if (period === "month") {
       const targetMonth = new Date(Date.UTC(nowUTC.getUTCFullYear(), nowUTC.getUTCMonth() + offset, 1));
@@ -2166,30 +1725,23 @@
 
   function renderDetailPeriodSections(username, period, offset = 0) {
     const periodMRs = getDetailPeriodMRs(period, offset);
-    const allMRs = getFilteredMRs();
-    const periodContributors = buildContributors(allMRs, getDetailPeriodBounds(period, offset));
+    const allMRsList = getFilteredMRs();
+    const periodContributors = buildContributors(allMRsList, getDetailPeriodBounds(period, offset));
     const contributor = periodContributors.find((c) => c.username === username);
 
     if (contributor) {
       renderDetailMetrics(contributor);
       renderDetailRepos(contributor);
     } else {
-      // No activity in this period
-      detailMetrics.innerHTML = METRICS.map((m) =>
+      const metricLabels = ["Total MRs", "Merged MRs", "Comments", "Reviews Given", "Avg Lead Time", "AI Co-Authored"];
+      detailMetrics.innerHTML = metricLabels.map((label) =>
         `<div class="detail-metric-card">
           <div class="detail-metric-value">0</div>
-          <div class="detail-metric-label">${escapeHtml(m.label)}</div>
+          <div class="detail-metric-label">${escapeHtml(label)}</div>
         </div>`
       ).join("");
       detailRepos.innerHTML = '<div style="color:var(--text-muted);font-size:0.8rem;">No repositories</div>';
     }
-
-    // Recompute badges for the selected period
-    computeBadges(periodContributors);
-    const badges = (contributor && contributor.badges) || [];
-    detailBadges.innerHTML = badges.length
-      ? badges.map((b) => `<span class="lb-badge ${b.css}" title="${escapeHtml(b.title)}">${b.icon} ${escapeHtml(b.label)}</span>`).join("")
-      : "";
 
     renderDetailCharts(username, period, offset);
     renderDetailCollaborators(
@@ -2208,7 +1760,6 @@
     const contributor = contributors.find((c) => c.username === username);
     if (!contributor) return;
 
-    // Header (uses all-time data)
     if (contributor.avatar_url) {
       detailAvatar.src = contributor.avatar_url;
       detailAvatar.hidden = false;
@@ -2222,10 +1773,8 @@
     detailPeriodOffset = 0;
     detailCustomRangePicker.hidden = (detailGranularity !== "custom");
 
-    // Period-dependent sections (Metrics, Charts, Collaborators, Repos)
     renderDetailPeriodSections(username, detailGranularity, detailPeriodOffset);
 
-    // Recent MRs always uses all-time data
     renderDetailMRs(contributor);
 
     detailOverlay.hidden = false;
@@ -2241,13 +1790,33 @@
   }
 
   function renderDetailMetrics(contributor) {
-    detailMetrics.innerHTML = METRICS.map((m) => {
-      const val = m.compute(contributor);
-      return `<div class="detail-metric-card">
-        <div class="detail-metric-value">${val.toLocaleString()}</div>
+    const mergedCount = contributor.authored_mrs.filter((mr) => mr.state === "merged").length;
+    const mergedMRs = contributor.authored_mrs.filter((mr) => mr.state === "merged" && mr.merged_at);
+    let avgLeadTime = 0;
+    if (mergedMRs.length > 0) {
+      avgLeadTime = mergedMRs.reduce((s, mr) =>
+        s + (new Date(mr.merged_at) - new Date(mr.created_at)) / 86400000, 0) / mergedMRs.length;
+    }
+    const aiCount = contributor.authored_mrs.filter((mr) => mr.ai_coauthored).length;
+    const aiPct = contributor.authored_mrs.length > 0
+      ? Math.round((aiCount / contributor.authored_mrs.length) * 100)
+      : 0;
+
+    const metrics = [
+      { label: "Total MRs", value: contributor.authored_mrs.length.toLocaleString() },
+      { label: "Merged MRs", value: mergedCount.toLocaleString() },
+      { label: "Comments", value: contributor.comments.toLocaleString() },
+      { label: "Reviews Given", value: contributor.approvals.toLocaleString() },
+      { label: "Avg Lead Time", value: avgLeadTime > 0 ? `${avgLeadTime.toFixed(1)}d` : "N/A" },
+      { label: "AI Co-Authored", value: `${aiPct}%` },
+    ];
+
+    detailMetrics.innerHTML = metrics.map((m) =>
+      `<div class="detail-metric-card">
+        <div class="detail-metric-value">${m.value}</div>
         <div class="detail-metric-label">${escapeHtml(m.label)}</div>
-      </div>`;
-    }).join("");
+      </div>`
+    ).join("");
   }
 
   function renderDetailCollaborators(contributor, mrs, contributors) {
@@ -2281,38 +1850,29 @@
     }).join("");
   }
 
-  // Maps the period toggle to a fixed time range and bucket granularity.
-  // "week"  → last 7 days,    daily   buckets
-  // "month" → last ~4 weeks,  weekly  buckets
-  // "year"  → last 12 months, monthly buckets
   function getDetailRange(period, offset = 0) {
     const now = new Date();
     const nowUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 
     if (period === "week") {
-      // Calendar week (Mon–Sun), shifted by offset weeks
       const currentMonday = mondayOf(nowUTC);
       const targetMonday = new Date(currentMonday);
       targetMonday.setUTCDate(targetMonday.getUTCDate() + (offset * 7));
       const targetSunday = new Date(targetMonday);
       targetSunday.setUTCDate(targetSunday.getUTCDate() + 6);
-      // Cap at today so future days don't appear
       const end = targetSunday > nowUTC ? nowUTC : targetSunday;
       return { gran: "day", startKey: toKey(targetMonday), endKey: toKey(end) };
     }
     if (period === "month") {
-      // Calendar month, weekly buckets, shifted by offset months
       const targetMonth = new Date(Date.UTC(nowUTC.getUTCFullYear(), nowUTC.getUTCMonth() + offset, 1));
       const firstMonday = mondayOf(targetMonth);
       const lastDay = new Date(Date.UTC(targetMonth.getUTCFullYear(), targetMonth.getUTCMonth() + 1, 0));
       const lastMonday = mondayOf(lastDay);
-      // Cap at current week so future weeks don't appear
       const currentMonday = mondayOf(nowUTC);
       const end = lastMonday > currentMonday ? currentMonday : lastMonday;
       return { gran: "week", startKey: toKey(firstMonday), endKey: toKey(end) };
     }
     if (period === "year") {
-      // Calendar year, monthly buckets, shifted by offset years
       const targetYear = nowUTC.getUTCFullYear() + offset;
       const endMonth = (targetYear === nowUTC.getUTCFullYear())
         ? nowUTC.getUTCMonth() + 1
@@ -2326,7 +1886,6 @@
         const endBucket = getBucketKey(detailCustomRangeEnd + "T00:00:00Z", subGran);
         return { gran: subGran, startKey: startBucket, endKey: endBucket };
       }
-      // Fallback: show current month
       const ek = `${nowUTC.getUTCFullYear()}-${String(nowUTC.getUTCMonth() + 1).padStart(2, "0")}`;
       return { gran: "month", startKey: ek, endKey: ek };
     }
@@ -2344,7 +1903,6 @@
       const startKey = `${earliest.getUTCFullYear()}-${String(earliest.getUTCMonth() + 1).padStart(2, "0")}`;
       return { gran: "month", startKey, endKey };
     }
-    // fallback — same as year offset 0
     const endKey = `${nowUTC.getUTCFullYear()}-${String(nowUTC.getUTCMonth() + 1).padStart(2, "0")}`;
     return { gran: "month", startKey: `${nowUTC.getUTCFullYear()}-01`, endKey };
   }
@@ -2354,7 +1912,7 @@
 
     function ensure(key) {
       if (!bucketData.has(key)) {
-        bucketData.set(key, { authored: 0, merged: 0, comments: 0, approvals: 0, adds: 0, dels: 0, priorityPts: 0, aiCoauthored: 0 });
+        bucketData.set(key, { authored: 0, merged: 0, comments: 0, approvals: 0, adds: 0, dels: 0, aiCoauthored: 0 });
       }
       return bucketData.get(key);
     }
@@ -2371,9 +1929,6 @@
         if (!skip.has("lines")) {
           b.adds += mr.additions || 0;
           b.dels += mr.deletions || 0;
-        }
-        if (mr.jira_key) {
-          b.priorityPts += SCORE[priorityScoreKey(mr.jira_priority)] || 0;
         }
         if (mr.ai_coauthored) b.aiCoauthored++;
       }
@@ -2397,18 +1952,10 @@
       }
     }
 
-    // Generate all buckets across the full range, filling zeros for empty periods
     const result = [];
     let cur = startKey;
     while (cur <= endKey) {
-      const d = bucketData.get(cur) || { authored: 0, merged: 0, comments: 0, approvals: 0, adds: 0, dels: 0, priorityPts: 0, aiCoauthored: 0 };
-      const nonMerged = d.authored - d.merged;
-      d.score = Math.round(
-        (nonMerged * SCORE.mr_open) + (d.merged * SCORE.mr_merged) +
-        (d.comments * SCORE.comment) + (d.approvals * SCORE.approval) +
-        (d.adds * SCORE.line_added) + (d.dels * SCORE.line_deleted) + d.priorityPts +
-        (d.aiCoauthored * SCORE.ai_coauthor)
-      );
+      const d = bucketData.get(cur) || { authored: 0, merged: 0, comments: 0, approvals: 0, adds: 0, dels: 0, aiCoauthored: 0 };
       result.push({ key: cur, label: formatBucketLabel(cur, gran), ...d });
       cur = advanceBucket(cur, gran);
     }
@@ -2428,18 +1975,12 @@
     }
 
     const labels = data.map((d) => d.label);
-    const hasPriority = data.some((d) => d.priorityPts > 0);
 
     const configs = [
-      { title: "Score",       values: data.map((d) => d.score),       color: "#6366f1" },
       { title: "MRs Merged",  values: data.map((d) => d.merged),      color: "#10b981" },
       { title: "Comments",    values: data.map((d) => d.comments),     color: "#3b82f6" },
       { title: "Approvals",   values: data.map((d) => d.approvals),    color: "#f59e0b" },
     ];
-
-    if (hasPriority) {
-      configs.splice(2, 0, { title: "Bug Priority", values: data.map((d) => d.priorityPts), color: "#ef4444" });
-    }
 
     const hasAI = data.some((d) => d.aiCoauthored > 0);
     if (hasAI) {
@@ -2572,7 +2113,7 @@
     if (detailGranularity === "custom") {
       detailCustomRangePicker.hidden = false;
       detailPeriodNav.hidden = true;
-      return; // wait for Apply
+      return;
     }
     detailCustomRangePicker.hidden = true;
     if (detailCurrentUsername) renderDetailPeriodSections(detailCurrentUsername, detailGranularity, detailPeriodOffset);
@@ -2615,5 +2156,5 @@
   }
 
   // --- Init ---
-  Promise.all([loadScoreConfig(), loadBadgeConfig()]).then(loadData);
+  loadData();
 })();
