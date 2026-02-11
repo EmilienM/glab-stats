@@ -75,6 +75,12 @@
   let detailCustomRangeStart = null;
   let detailCustomRangeEnd = null;
 
+  // Stored period data for drill-down access
+  let lastPeriodMRs = [];
+  let lastPeriodContributors = [];
+  let lastAllFilteredMRs = [];
+  let drilldownChart = null;
+
   // --- Theme ---
   function initTheme() {
     const saved = localStorage.getItem("theme") || "dark";
@@ -663,6 +669,11 @@
       generatedAtEl.textContent = `Data from ${new Date(generatedAt).toLocaleString()}`;
     }
 
+    // Store for drill-down access
+    lastPeriodMRs = periodMRs;
+    lastPeriodContributors = contributors;
+    lastAllFilteredMRs = allFiltered;
+
     renderAggregateCards(aggregates, prevAggregates);
     if (!skipTimeline) renderTimeline(allFiltered);
     renderContributorList(contributors);
@@ -713,7 +724,7 @@
         const trend = computeTrendIndicator(val, prev, m.invert);
         trendHtml = `<div class="aggregate-card-trend ${trend.css}">${trend.arrow} ${trend.label}</div>`;
       }
-      return `<div class="aggregate-card" data-tooltip="${escapeHtml(m.tip)}">
+      return `<div class="aggregate-card" data-metric="${m.key}" data-tooltip="${escapeHtml(m.tip)}">
         <div class="aggregate-card-value">${formatted}</div>
         ${trendHtml}
         <div class="aggregate-card-label">${m.label}</div>
@@ -751,6 +762,575 @@
     tooltipTarget = null;
     tooltipEl.classList.remove("visible");
   });
+
+  // --- Metric Drill-Down Modal ---
+  const drilldownOverlay = $("#metric-drilldown-overlay");
+  const drilldownTitle = $("#metric-drilldown-title");
+  const drilldownBody = $("#metric-drilldown-body");
+  const drilldownCloseBtn = $("#metric-drilldown-close");
+
+  document.addEventListener("click", (e) => {
+    const card = e.target.closest(".aggregate-card[data-metric]");
+    if (!card) return;
+    openMetricDrilldown(card.dataset.metric);
+  });
+
+  function closeDrilldown() {
+    drilldownOverlay.hidden = true;
+    document.body.style.overflow = "";
+    if (drilldownChart) {
+      drilldownChart.destroy();
+      drilldownChart = null;
+    }
+  }
+
+  drilldownCloseBtn.addEventListener("click", closeDrilldown);
+  drilldownOverlay.addEventListener("click", (e) => {
+    if (e.target === drilldownOverlay) closeDrilldown();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !drilldownOverlay.hidden) closeDrilldown();
+  });
+
+  // Shared drill-down components
+  function renderDrilldownRepoTable(rows, columns) {
+    if (rows.length === 0) return '<p class="drilldown-summary">No data available</p>';
+    const ths = columns.map((c) => `<th${c.align === "right" ? ' style="text-align:right"' : ""}>${escapeHtml(c.label)}</th>`).join("");
+    const trs = rows.map((row) => {
+      const tds = columns.map((c) => {
+        const val = row[c.key];
+        const align = c.align === "right" ? ' class="num"' : "";
+        return `<td${align}>${typeof val === "number" ? val.toLocaleString() : escapeHtml(String(val))}</td>`;
+      }).join("");
+      return `<tr>${tds}</tr>`;
+    }).join("");
+    return `<table class="drilldown-table"><thead><tr>${ths}</tr></thead><tbody>${trs}</tbody></table>`;
+  }
+
+  function renderDrilldownMRList(mrs, columns, limit) {
+    if (mrs.length === 0) return '<p class="drilldown-summary">No merge requests found</p>';
+    const pageSize = limit || 20;
+    let showing = pageSize;
+
+    function buildList(count) {
+      const slice = mrs.slice(0, count);
+      const items = slice.map((mr) => {
+        const url = mr.web_url ? escapeHtml(mr.web_url) : "#";
+        const dotClass = `detail-mr-dot-${mr.state}`;
+        const metaCols = columns.map((c) => `<span class="drilldown-mr-meta">${typeof c.value === "function" ? c.value(mr) : escapeHtml(String(mr[c.key] || ""))}</span>`).join("");
+        return `<div class="drilldown-mr-item">
+          <span class="detail-mr-dot ${dotClass}"></span>
+          <span class="drilldown-mr-title"><a href="${url}" target="_blank" rel="noopener">${escapeHtml(mr.title)}</a></span>
+          ${metaCols}
+        </div>`;
+      }).join("");
+      const moreBtn = count < mrs.length ? `<button class="drilldown-show-more" data-action="show-more">Show more (${mrs.length - count} remaining)</button>` : "";
+      return `<div class="drilldown-mr-list">${items}</div>${moreBtn}`;
+    }
+
+    const container = document.createElement("div");
+    container.innerHTML = buildList(showing);
+    container.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-action='show-more']");
+      if (!btn) return;
+      showing += pageSize;
+      container.innerHTML = buildList(showing);
+    });
+    return container;
+  }
+
+  function renderDrilldownDistribution(values, unit) {
+    if (values.length === 0) return '<p class="drilldown-summary">No data available</p>';
+    const sorted = [...values].sort((a, b) => a - b);
+    const p = (pct) => {
+      const idx = Math.floor(pct * sorted.length);
+      return sorted[Math.min(idx, sorted.length - 1)];
+    };
+    const fmt = (v) => {
+      if (unit === "days") {
+        if (v < 1) return `${Math.round(v * 24)}h`;
+        return `${v.toFixed(1)}d`;
+      }
+      if (unit === "hours") {
+        if (v >= 24) return `${(v / 24).toFixed(1)}d`;
+        if (v < 1) return `${Math.round(v * 60)}m`;
+        return `${v.toFixed(1)}h`;
+      }
+      return v.toLocaleString();
+    };
+    const stats = [
+      { label: "Min", value: fmt(sorted[0]) },
+      { label: "P25", value: fmt(p(0.25)) },
+      { label: "Median", value: fmt(p(0.5)) },
+      { label: "P75", value: fmt(p(0.75)) },
+      { label: "Max", value: fmt(sorted[sorted.length - 1]) },
+    ];
+    return `<div class="drilldown-distribution">${stats.map((s) => `<div class="drilldown-dist-item"><div class="drilldown-dist-value">${s.value}</div><div class="drilldown-dist-label">${s.label}</div></div>`).join("")}</div>`;
+  }
+
+  function renderDrilldownTrendChart(container, dataPoints, labels, color, chartLabel) {
+    const wrap = document.createElement("div");
+    wrap.className = "drilldown-chart-wrap";
+    const canvas = document.createElement("canvas");
+    wrap.appendChild(canvas);
+    container.appendChild(wrap);
+
+    const colors = getChartColors();
+    if (drilldownChart) drilldownChart.destroy();
+    drilldownChart = new Chart(canvas, {
+      type: "bar",
+      data: {
+        labels,
+        datasets: [{
+          label: chartLabel || "",
+          data: dataPoints,
+          backgroundColor: color + "80",
+          borderColor: color,
+          borderWidth: 1,
+          borderRadius: 3,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: "rgba(0,0,0,0.8)",
+            titleFont: { size: 11 },
+            bodyFont: { size: 10 },
+            padding: 8,
+            cornerRadius: 6,
+          },
+        },
+        scales: {
+          x: { grid: { display: false }, ticks: { color: colors.text, font: { size: 9 }, maxRotation: 45, autoSkip: true } },
+          y: { beginAtZero: true, grid: { color: colors.grid }, ticks: { color: colors.text, font: { size: 9 }, precision: 0 } },
+        },
+      },
+    });
+  }
+
+  function getRecentBuckets(mrs, gran, count) {
+    const timeline = buildTimelineBuckets(mrs, gran);
+    const n = Math.min(count, timeline.keys.length);
+    return {
+      keys: timeline.keys.slice(-n),
+      labels: timeline.labels.slice(-n),
+      merged: timeline.merged.slice(-n),
+    };
+  }
+
+  function groupMRsByRepo(mrs) {
+    const repoMap = new Map();
+    for (const mr of mrs) {
+      const label = repoDisplayLabel(mr.repoPath);
+      if (!repoMap.has(label)) repoMap.set(label, []);
+      repoMap.get(label).push(mr);
+    }
+    return repoMap;
+  }
+
+  function openMetricDrilldown(metricId) {
+    drilldownBody.innerHTML = "";
+    if (drilldownChart) {
+      drilldownChart.destroy();
+      drilldownChart = null;
+    }
+
+    const mrs = lastPeriodMRs;
+    const contributors = lastPeriodContributors;
+    const mergedMRs = mrs.filter((mr) => mr.state === "merged");
+
+    const titles = {
+      mrThroughput: "Merged MRs",
+      medianLeadTime: "Lead Time to Merge",
+      medianTurnaround: "Review Turnaround",
+      aiRate: "AI Co-Authorship",
+      aiBreadth: "AI Adoption Breadth",
+      reviewCoverage: "Review Coverage",
+      activeContributors: "Active Contributors",
+      linesChanged: "Lines Changed",
+    };
+
+    drilldownTitle.textContent = titles[metricId] || metricId;
+
+    if (metricId === "mrThroughput") {
+      drilldownMrThroughput(mrs, mergedMRs);
+    } else if (metricId === "medianLeadTime") {
+      drilldownLeadTime(mergedMRs);
+    } else if (metricId === "medianTurnaround") {
+      drilldownTurnaround(mrs);
+    } else if (metricId === "aiRate") {
+      drilldownAiRate(mrs);
+    } else if (metricId === "aiBreadth") {
+      drilldownAiBreadth(contributors);
+    } else if (metricId === "reviewCoverage") {
+      drilldownReviewCoverage(mergedMRs);
+    } else if (metricId === "activeContributors") {
+      drilldownActiveContributors(contributors);
+    } else if (metricId === "linesChanged") {
+      drilldownLinesChanged(mrs);
+    }
+
+    drilldownOverlay.hidden = false;
+    document.body.style.overflow = "hidden";
+  }
+
+  function drilldownMrThroughput(mrs, mergedMRs) {
+    const repoMap = groupMRsByRepo(mrs);
+    const rows = [...repoMap.entries()].map(([repo, repoMRs]) => {
+      const merged = repoMRs.filter((mr) => mr.state === "merged").length;
+      const total = repoMRs.length;
+      return { repo, merged, total, rate: total > 0 ? `${Math.round((merged / total) * 100)}%` : "0%" };
+    }).sort((a, b) => b.merged - a.merged);
+
+    const sec1 = document.createElement("div");
+    sec1.className = "drilldown-section";
+    sec1.innerHTML = `<div class="drilldown-section-title">Repo Breakdown</div>` +
+      renderDrilldownRepoTable(rows, [
+        { key: "repo", label: "Repository" },
+        { key: "merged", label: "Merged", align: "right" },
+        { key: "total", label: "Total", align: "right" },
+        { key: "rate", label: "Merge Rate", align: "right" },
+      ]);
+    drilldownBody.appendChild(sec1);
+
+    // Trend chart
+    const sec2 = document.createElement("div");
+    sec2.className = "drilldown-section";
+    sec2.innerHTML = `<div class="drilldown-section-title">Trend</div>`;
+    const recent = getRecentBuckets(lastAllFilteredMRs, currentGranularity === "custom" ? "month" : currentGranularity, 8);
+    renderDrilldownTrendChart(sec2, recent.merged, recent.labels, "#10b981", "Merged");
+    drilldownBody.appendChild(sec2);
+
+    // MR list
+    const sec3 = document.createElement("div");
+    sec3.className = "drilldown-section";
+    sec3.innerHTML = `<div class="drilldown-section-title">Merged MRs</div>`;
+    const sorted = [...mergedMRs].sort((a, b) => new Date(b.merged_at || b.created_at) - new Date(a.merged_at || a.created_at));
+    const listEl = renderDrilldownMRList(sorted, [
+      { value: (mr) => repoDisplayLabel(mr.repoPath) },
+      { value: (mr) => mr.author.name || mr.author.username },
+      { value: (mr) => { const d = new Date(mr.merged_at || mr.created_at); return `${SHORT_MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`; } },
+    ]);
+    sec3.appendChild(listEl);
+    drilldownBody.appendChild(sec3);
+  }
+
+  function drilldownLeadTime(mergedMRs) {
+    const mrsWithLead = mergedMRs.filter((mr) => mr.merged_at).map((mr) => ({
+      ...mr,
+      _leadDays: (new Date(mr.merged_at) - new Date(mr.created_at)) / 86400000,
+    }));
+
+    // Distribution
+    const values = mrsWithLead.map((mr) => mr._leadDays);
+    const sec1 = document.createElement("div");
+    sec1.className = "drilldown-section";
+    sec1.innerHTML = `<div class="drilldown-section-title">Distribution</div>` + renderDrilldownDistribution(values, "days");
+    drilldownBody.appendChild(sec1);
+
+    // Repo breakdown
+    const repoMap = groupMRsByRepo(mrsWithLead);
+    const rows = [...repoMap.entries()].map(([repo, repoMRs]) => {
+      const leads = repoMRs.map((mr) => mr._leadDays);
+      const med = median(leads);
+      return { repo, median: formatAggregateValue("medianLeadTime", med), count: repoMRs.length };
+    }).sort((a, b) => b.count - a.count);
+
+    const sec2 = document.createElement("div");
+    sec2.className = "drilldown-section";
+    sec2.innerHTML = `<div class="drilldown-section-title">Repo Breakdown</div>` +
+      renderDrilldownRepoTable(rows, [
+        { key: "repo", label: "Repository" },
+        { key: "median", label: "Median Lead Time", align: "right" },
+        { key: "count", label: "MR Count", align: "right" },
+      ]);
+    drilldownBody.appendChild(sec2);
+
+    // MR list sorted by lead time desc
+    const sorted = [...mrsWithLead].sort((a, b) => b._leadDays - a._leadDays);
+    const sec3 = document.createElement("div");
+    sec3.className = "drilldown-section";
+    sec3.innerHTML = `<div class="drilldown-section-title">MRs by Lead Time</div>`;
+    const listEl = renderDrilldownMRList(sorted, [
+      { value: (mr) => repoDisplayLabel(mr.repoPath) },
+      { value: (mr) => mr.author.name || mr.author.username },
+      { value: (mr) => formatAggregateValue("medianLeadTime", mr._leadDays) },
+    ]);
+    sec3.appendChild(listEl);
+    drilldownBody.appendChild(sec3);
+  }
+
+  function drilldownTurnaround(mrs) {
+    const mrsWithTurnaround = [];
+    for (const mr of mrs) {
+      const nonAuthorComments = (mr.commenters || [])
+        .filter((c) => c.username !== mr.author.username && c.created_at)
+        .map((c) => new Date(c.created_at))
+        .sort((a, b) => a - b);
+      if (nonAuthorComments.length > 0) {
+        const hours = (nonAuthorComments[0] - new Date(mr.created_at)) / 3600000;
+        mrsWithTurnaround.push({ ...mr, _turnaroundHours: hours });
+      }
+    }
+
+    // Distribution
+    const values = mrsWithTurnaround.map((mr) => mr._turnaroundHours);
+    const sec1 = document.createElement("div");
+    sec1.className = "drilldown-section";
+    sec1.innerHTML = `<div class="drilldown-section-title">Distribution</div>` + renderDrilldownDistribution(values, "hours");
+    drilldownBody.appendChild(sec1);
+
+    // Repo breakdown
+    const repoMap = groupMRsByRepo(mrsWithTurnaround);
+    const rows = [...repoMap.entries()].map(([repo, repoMRs]) => {
+      const vals = repoMRs.map((mr) => mr._turnaroundHours);
+      const med = median(vals);
+      return { repo, median: formatAggregateValue("medianTurnaround", med), count: repoMRs.length };
+    }).sort((a, b) => b.count - a.count);
+
+    const sec2 = document.createElement("div");
+    sec2.className = "drilldown-section";
+    sec2.innerHTML = `<div class="drilldown-section-title">Repo Breakdown</div>` +
+      renderDrilldownRepoTable(rows, [
+        { key: "repo", label: "Repository" },
+        { key: "median", label: "Median Turnaround", align: "right" },
+        { key: "count", label: "MR Count", align: "right" },
+      ]);
+    drilldownBody.appendChild(sec2);
+
+    // MR list sorted by turnaround desc
+    const sorted = [...mrsWithTurnaround].sort((a, b) => b._turnaroundHours - a._turnaroundHours);
+    const sec3 = document.createElement("div");
+    sec3.className = "drilldown-section";
+    sec3.innerHTML = `<div class="drilldown-section-title">MRs by Turnaround</div>`;
+    const listEl = renderDrilldownMRList(sorted, [
+      { value: (mr) => repoDisplayLabel(mr.repoPath) },
+      { value: (mr) => mr.author.name || mr.author.username },
+      { value: (mr) => formatAggregateValue("medianTurnaround", mr._turnaroundHours) },
+    ]);
+    sec3.appendChild(listEl);
+    drilldownBody.appendChild(sec3);
+  }
+
+  function drilldownAiRate(mrs) {
+    const repoMap = groupMRsByRepo(mrs);
+    const rows = [...repoMap.entries()].map(([repo, repoMRs]) => {
+      const aiMRs = repoMRs.filter((mr) => mr.ai_coauthored).length;
+      const total = repoMRs.length;
+      return { repo, aiMRs, total, rate: total > 0 ? `${Math.round((aiMRs / total) * 100)}%` : "0%" };
+    }).sort((a, b) => b.aiMRs - a.aiMRs);
+
+    const sec1 = document.createElement("div");
+    sec1.className = "drilldown-section";
+    sec1.innerHTML = `<div class="drilldown-section-title">Repo Breakdown</div>` +
+      renderDrilldownRepoTable(rows, [
+        { key: "repo", label: "Repository" },
+        { key: "aiMRs", label: "AI MRs", align: "right" },
+        { key: "total", label: "Total MRs", align: "right" },
+        { key: "rate", label: "AI Rate", align: "right" },
+      ]);
+    drilldownBody.appendChild(sec1);
+
+    // Trend chart
+    const sec2 = document.createElement("div");
+    sec2.className = "drilldown-section";
+    sec2.innerHTML = `<div class="drilldown-section-title">Trend</div>`;
+    const gran = currentGranularity === "custom" ? "month" : currentGranularity;
+    const timeline = buildTimelineBuckets(lastAllFilteredMRs, gran);
+    const n = Math.min(8, timeline.keys.length);
+    const recentKeys = timeline.keys.slice(-n);
+    const recentLabels = timeline.labels.slice(-n);
+
+    // Compute AI rate per bucket
+    const aiRates = recentKeys.map((key) => {
+      const bucketMRs = lastAllFilteredMRs.filter((mr) => getBucketKey(mr.created_at, gran) === key);
+      if (bucketMRs.length === 0) return 0;
+      return Math.round((bucketMRs.filter((mr) => mr.ai_coauthored).length / bucketMRs.length) * 100);
+    });
+    renderDrilldownTrendChart(sec2, aiRates, recentLabels, "#a855f7", "AI Rate %");
+    drilldownBody.appendChild(sec2);
+
+    // MR list
+    const aiMRsList = mrs.filter((mr) => mr.ai_coauthored).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    const sec3 = document.createElement("div");
+    sec3.className = "drilldown-section";
+    sec3.innerHTML = `<div class="drilldown-section-title">AI Co-Authored MRs</div>`;
+    const listEl = renderDrilldownMRList(aiMRsList, [
+      { value: (mr) => repoDisplayLabel(mr.repoPath) },
+      { value: (mr) => mr.author.name || mr.author.username },
+      { value: (mr) => { const d = new Date(mr.created_at); return `${SHORT_MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`; } },
+    ]);
+    sec3.appendChild(listEl);
+    drilldownBody.appendChild(sec3);
+  }
+
+  function drilldownAiBreadth(contributors) {
+    const threshold = getAiAdoptionThreshold();
+    const active = contributors.filter((c) => c.authored_mrs.length > 0 || c.comments > 0 || c.approvals > 0);
+    const withAuthored = active.filter((c) => c.authored_mrs.length > 0);
+    const above = withAuthored.filter((c) => {
+      const aiMRs = c.authored_mrs.filter((mr) => mr.ai_coauthored).length;
+      return (aiMRs / c.authored_mrs.length) >= threshold;
+    });
+    const below = withAuthored.length - above.length;
+    const noMRs = active.length - withAuthored.length;
+
+    const sec1 = document.createElement("div");
+    sec1.className = "drilldown-section";
+    sec1.innerHTML = `<div class="drilldown-section-title">Summary</div>
+      <div class="drilldown-summary">
+        <strong>${above.length}</strong> of ${withAuthored.length} contributors with MRs are above the ${Math.round(threshold * 100)}% threshold.<br>
+        <strong>${below}</strong> contributors are below the threshold.${noMRs > 0 ? `<br>${noMRs} active contributors have no authored MRs.` : ""}
+      </div>
+      <div class="drilldown-summary" style="font-size:0.75rem;color:var(--text-muted);">
+        Threshold: ${Math.round(threshold * 100)}% (configurable in Settings)
+      </div>`;
+    drilldownBody.appendChild(sec1);
+
+    // Trend chart
+    const sec2 = document.createElement("div");
+    sec2.className = "drilldown-section";
+    sec2.innerHTML = `<div class="drilldown-section-title">Trend</div>`;
+    const gran = currentGranularity === "custom" ? "month" : currentGranularity;
+    const timeline = buildTimelineBuckets(lastAllFilteredMRs, gran);
+    const n = Math.min(8, timeline.keys.length);
+    const recentKeys = timeline.keys.slice(-n);
+    const recentLabels = timeline.labels.slice(-n);
+
+    const breadthRates = recentKeys.map((key) => {
+      const bounds = periodBounds(gran, key);
+      if (!bounds) return 0;
+      const bucketContributors = buildContributors(lastAllFilteredMRs, bounds);
+      const bucketActive = bucketContributors.filter((c) => c.authored_mrs.length > 0);
+      if (bucketActive.length === 0) return 0;
+      const bucketAbove = bucketActive.filter((c) => {
+        const ai = c.authored_mrs.filter((mr) => mr.ai_coauthored).length;
+        return (ai / c.authored_mrs.length) >= threshold;
+      });
+      return Math.round((bucketAbove.length / bucketActive.length) * 100);
+    });
+    renderDrilldownTrendChart(sec2, breadthRates, recentLabels, "#a855f7", "AI Adoption %");
+    drilldownBody.appendChild(sec2);
+  }
+
+  function drilldownReviewCoverage(mergedMRs) {
+    const repoMap = groupMRsByRepo(mergedMRs);
+    const rows = [...repoMap.entries()].map(([repo, repoMRs]) => {
+      const reviewed = repoMRs.filter((mr) => (mr.approvers || []).length > 0).length;
+      const unreviewed = repoMRs.length - reviewed;
+      return { repo, reviewed, unreviewed, rate: repoMRs.length > 0 ? `${Math.round((reviewed / repoMRs.length) * 100)}%` : "0%" };
+    }).sort((a, b) => b.unreviewed - a.unreviewed);
+
+    const sec1 = document.createElement("div");
+    sec1.className = "drilldown-section";
+    sec1.innerHTML = `<div class="drilldown-section-title">Repo Breakdown</div>` +
+      renderDrilldownRepoTable(rows, [
+        { key: "repo", label: "Repository" },
+        { key: "reviewed", label: "Reviewed", align: "right" },
+        { key: "unreviewed", label: "Unreviewed", align: "right" },
+        { key: "rate", label: "Coverage", align: "right" },
+      ]);
+    drilldownBody.appendChild(sec1);
+
+    // Unreviewed MR list
+    const unreviewed = mergedMRs.filter((mr) => (mr.approvers || []).length === 0)
+      .sort((a, b) => new Date(b.merged_at || b.created_at) - new Date(a.merged_at || a.created_at));
+    const sec2 = document.createElement("div");
+    sec2.className = "drilldown-section";
+    sec2.innerHTML = `<div class="drilldown-section-title">Unreviewed Merged MRs</div>`;
+    const listEl = renderDrilldownMRList(unreviewed, [
+      { value: (mr) => repoDisplayLabel(mr.repoPath) },
+      { value: (mr) => mr.author.name || mr.author.username },
+      { value: (mr) => { const d = new Date(mr.merged_at || mr.created_at); return `${SHORT_MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`; } },
+    ]);
+    sec2.appendChild(listEl);
+    drilldownBody.appendChild(sec2);
+  }
+
+  function drilldownActiveContributors(contributors) {
+    const active = contributors.filter((c) => c.authored_mrs.length > 0 || c.comments > 0 || c.approvals > 0);
+    const authored = active.filter((c) => c.authored_mrs.length > 0).length;
+    const reviewed = active.filter((c) => c.approvals > 0).length;
+    const commented = active.filter((c) => c.comments > 0).length;
+    const authoredAndReviewed = active.filter((c) => c.authored_mrs.length > 0 && c.approvals > 0).length;
+
+    const sec1 = document.createElement("div");
+    sec1.className = "drilldown-section";
+    sec1.innerHTML = `<div class="drilldown-section-title">Activity Breakdown</div>` +
+      renderDrilldownRepoTable([
+        { activity: "Authored MRs", count: authored },
+        { activity: "Reviewed (approved)", count: reviewed },
+        { activity: "Commented", count: commented },
+        { activity: "Both authored & reviewed", count: authoredAndReviewed },
+      ], [
+        { key: "activity", label: "Activity Type" },
+        { key: "count", label: "Contributors", align: "right" },
+      ]);
+    drilldownBody.appendChild(sec1);
+
+    const sec2 = document.createElement("div");
+    sec2.className = "drilldown-section";
+    sec2.innerHTML = `<div class="drilldown-section-title">Summary</div>
+      <div class="drilldown-summary">
+        ${active.length} total active contributors in this period.<br>
+        ${authoredAndReviewed} contributors both authored and reviewed MRs.
+      </div>`;
+    drilldownBody.appendChild(sec2);
+  }
+
+  function drilldownLinesChanged(mrs) {
+    const totalAdds = mrs.reduce((s, mr) => s + (mr.additions || 0), 0);
+    const totalDels = mrs.reduce((s, mr) => s + (mr.deletions || 0), 0);
+    const total = totalAdds + totalDels;
+
+    // Ratio bar
+    const addsPct = total > 0 ? Math.round((totalAdds / total) * 100) : 50;
+    const delsPct = 100 - addsPct;
+    const sec1 = document.createElement("div");
+    sec1.className = "drilldown-section";
+    sec1.innerHTML = `<div class="drilldown-section-title">Additions vs Deletions</div>
+      <div class="drilldown-ratio-bar">
+        <div class="drilldown-ratio-adds" style="width:${addsPct}%">+${totalAdds.toLocaleString()}</div>
+        <div class="drilldown-ratio-dels" style="width:${delsPct}%">&minus;${totalDels.toLocaleString()}</div>
+      </div>`;
+    drilldownBody.appendChild(sec1);
+
+    // Repo breakdown
+    const repoMap = groupMRsByRepo(mrs);
+    const rows = [...repoMap.entries()].map(([repo, repoMRs]) => {
+      const adds = repoMRs.reduce((s, mr) => s + (mr.additions || 0), 0);
+      const dels = repoMRs.reduce((s, mr) => s + (mr.deletions || 0), 0);
+      return { repo, additions: adds, deletions: dels, total: adds + dels };
+    }).sort((a, b) => b.total - a.total);
+
+    const sec2 = document.createElement("div");
+    sec2.className = "drilldown-section";
+    sec2.innerHTML = `<div class="drilldown-section-title">Repo Breakdown</div>` +
+      renderDrilldownRepoTable(rows, [
+        { key: "repo", label: "Repository" },
+        { key: "additions", label: "Additions", align: "right" },
+        { key: "deletions", label: "Deletions", align: "right" },
+        { key: "total", label: "Total", align: "right" },
+      ]);
+    drilldownBody.appendChild(sec2);
+
+    // Top MRs by lines changed
+    const sorted = [...mrs].map((mr) => ({ ...mr, _lines: (mr.additions || 0) + (mr.deletions || 0) }))
+      .sort((a, b) => b._lines - a._lines);
+    const sec3 = document.createElement("div");
+    sec3.className = "drilldown-section";
+    sec3.innerHTML = `<div class="drilldown-section-title">Top MRs by Lines Changed</div>`;
+    const listEl = renderDrilldownMRList(sorted, [
+      { value: (mr) => repoDisplayLabel(mr.repoPath) },
+      { value: (mr) => mr.author.name || mr.author.username },
+      { value: (mr) => `+${(mr.additions || 0).toLocaleString()} / -${(mr.deletions || 0).toLocaleString()}` },
+    ]);
+    sec3.appendChild(listEl);
+    drilldownBody.appendChild(sec3);
+  }
 
   // --- Contributor List ---
   function renderContributorList(contributors) {
@@ -2145,7 +2725,7 @@
     if (e.target === detailOverlay) closeContributorDetail();
   });
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && !detailOverlay.hidden) closeContributorDetail();
+    if (e.key === "Escape" && !detailOverlay.hidden && drilldownOverlay.hidden) closeContributorDetail();
   });
 
   // --- Helpers ---
