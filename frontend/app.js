@@ -1591,6 +1591,52 @@
 
       y = doc.lastAutoTable.finalY + 8;
 
+      // Activity charts
+      if (detailCharts.length > 0) {
+        const chartW = pageW - 28;
+        const chartH = 35;
+        const chartsPerRow = 2;
+        const halfW = (chartW - 4) / 2;
+
+        for (let i = 0; i < detailCharts.length; i++) {
+          const chart = detailCharts[i];
+          const isLeft = i % chartsPerRow === 0;
+
+          // New row: check page space
+          if (isLeft) {
+            if (y + chartH + 10 > pageH - 20) {
+              doc.addPage();
+              y = 15;
+            }
+            if (i === 0) {
+              doc.setFontSize(12);
+              doc.setFont("helvetica", "bold");
+              doc.text("Activity Charts", 14, y);
+              y += 6;
+            }
+          }
+
+          // Chart title
+          const titleEl = chart.canvas.closest(".detail-chart-card")?.querySelector(".detail-chart-card-title");
+          const title = titleEl ? titleEl.textContent : "";
+          doc.setFontSize(8);
+          doc.setFont("helvetica", "normal");
+          doc.setTextColor(100);
+          const xPos = isLeft ? 14 : 14 + halfW + 4;
+          doc.text(title, xPos, y);
+          doc.setTextColor(0);
+
+          // Chart image
+          const chartImg = chart.canvas.toDataURL("image/png", 1.0);
+          doc.addImage(chartImg, "PNG", xPos, y + 1, halfW, chartH);
+
+          // Advance y after the right chart (or last chart if odd)
+          if (!isLeft || i === detailCharts.length - 1) {
+            y += chartH + 8;
+          }
+        }
+      }
+
       // Repository breakdown
       if (y > pageH - 40) {
         doc.addPage();
